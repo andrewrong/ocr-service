@@ -42,7 +42,7 @@ impl FromStr for Engine {
 #[derive(Debug, Serialize)]
 pub struct OcrResponse {
     pub markdown: String,
-    pub engine: Engine,
+    pub engine: String,
     pub pages: usize,
     pub duration_ms: u128,
 }

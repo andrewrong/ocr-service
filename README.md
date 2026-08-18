@@ -41,3 +41,15 @@ cp -R .agents/skills/ocr-local-service ~/.codex/skills/ocr-local-service
 ```
 
 Set `OCR_SERVICE_URL` when the service is not at `http://127.0.0.1:18100`.
+
+## Model timeouts and fallback
+
+Every rendered PDF page and uploaded image has a model-specific timeout. The defaults are 30
+seconds for Paddle, 60 seconds for GLM, and 120 seconds for Qwen. Override them with
+`OCR_PADDLE_TIMEOUT_SECS`, `OCR_GLM_TIMEOUT_SECS`, and `OCR_QWEN_TIMEOUT_SECS`.
+
+`auto` and `paddle` try Paddle, GLM, then Qwen. `glm` tries GLM, Paddle, then Qwen. `qwen` tries
+Qwen, GLM, then Paddle. Fallback happens only after a timeout; other upstream errors are returned
+immediately. A PDF response reports `engine: "mixed"` when different pages use different models.
+Ollama model calls default to one active request (`OCR_MAX_CONCURRENT_MODEL_REQUESTS=1`) so queue
+time is not mistaken for model execution time; PDF page rendering and preparation remain concurrent.

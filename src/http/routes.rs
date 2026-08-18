@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use futures::{StreamExt, stream};
+use futures::{StreamExt, TryStreamExt, stream};
 use tower_http::trace::TraceLayer;
 
 use crate::{
@@ -54,7 +54,7 @@ async fn ocr_image(
 
     Ok(Json(OcrResponse {
         markdown: output.markdown,
-        engine: output.engine,
+        engine: output.engine.to_string(),
         pages: 1,
         duration_ms: started.elapsed().as_millis(),
     }))
@@ -89,23 +89,32 @@ async fn ocr_pdf(
         }
     }))
     .buffer_unordered(concurrency)
-    .collect::<Vec<_>>()
-    .await;
+    .try_collect::<Vec<_>>()
+    .await
+    .map_err(ApiError::upstream)?;
 
     let mut pages = Vec::with_capacity(page_count);
-    let mut used_engine = state.ocr.resolved_engine(requested_engine);
-    for result in results {
-        let (number, markdown, engine) = result.map_err(ApiError::upstream)?;
-        used_engine = engine;
+    let mut used_engines = Vec::with_capacity(page_count);
+    for (number, markdown, engine) in results {
+        used_engines.push(engine);
         pages.push((number, markdown));
     }
 
     Ok(Json(OcrResponse {
         markdown: merge_pages(pages),
-        engine: used_engine,
+        engine: response_engine(&used_engines, state.ocr.resolved_engine(requested_engine)),
         pages: page_count,
         duration_ms: started.elapsed().as_millis(),
     }))
+}
+
+fn response_engine(used_engines: &[Engine], default: Engine) -> String {
+    let first = used_engines.first().copied().unwrap_or(default);
+    if used_engines.iter().all(|engine| *engine == first) {
+        first.to_string()
+    } else {
+        "mixed".to_owned()
+    }
 }
 
 async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
@@ -247,5 +256,23 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::response_engine;
+    use crate::models::Engine;
+
+    #[test]
+    fn response_engine_marks_mixed_page_engines() {
+        assert_eq!(
+            response_engine(&[Engine::Paddle, Engine::Glm], Engine::Paddle),
+            "mixed"
+        );
+        assert_eq!(
+            response_engine(&[Engine::Glm, Engine::Glm], Engine::Paddle),
+            "glm"
+        );
     }
 }

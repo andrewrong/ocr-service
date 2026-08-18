@@ -34,6 +34,8 @@ Rust 编写的 OCR 服务，通过 Ollama 调用本地视觉模型，支持 PDF 
 - `POST /ocr/image` — 图片 OCR，参数: file, engine
 - `GET /ocr/health` — 健康检查
 
+模型单页默认超时为 Paddle 30 秒、GLM 60 秒、Qwen 120 秒。模型超时后自动回退；多页使用不同模型时响应的 `engine` 为 `mixed`。Ollama 模型调用默认串行执行，避免排队时间被误判为模型超时。
+
 ## 外部依赖
 
 - Ollama 运行在宿主机 11434；容器通过 `host.docker.internal` 连接

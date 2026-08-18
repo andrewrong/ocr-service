@@ -51,3 +51,18 @@
 - [x] 创建 Compose 服务、健康检查和安全约束
 - [x] 静态验证 Compose、Dockerfile 和官方 ARM64 镜像标签
 - [x] 启动 OrbStack 后验证容器构建和 Skill 到容器的端到端调用
+
+## Phase 7: PDF 单页超时与模型回退
+
+- [x] 为 Paddle、GLM、Qwen 配置独立的单页超时
+- [x] 单页模型超时后按模型优先级自动回退
+- [x] 多页混合使用模型时返回 `mixed` 标记
+- [x] 增加真实 HTTP 边界的超时回退回归测试
+- [x] 限制 Ollama 模型调用并发，避免排队时间被误判为模型超时
+- [x] 用《权力的剧场》前 10 页验证稀疏页面不再拖死整份 PDF
+
+### Review
+
+第 5 页使用 Paddle 超过 30 秒后自动回退 GLM，其余页面继续使用 Paddle。前 10 页真实
+回归在 93 秒内返回 HTTP 200，响应包含 10 页 Markdown，并以 `engine: "mixed"` 标记混合模型。
+单元测试、Rust fmt 和 clippy 均通过。
