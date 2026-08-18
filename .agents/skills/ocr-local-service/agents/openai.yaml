@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local OCR Service"
+  short_description: "OCR local images and PDFs through the service"
+  default_prompt: "Use $ocr-local-service to OCR this local PDF into Markdown."

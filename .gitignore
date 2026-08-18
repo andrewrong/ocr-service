@@ -1,0 +1,9 @@
+/target
+.env
+.env.*
+!.env.example
+.safehouse
+/output/
+/tmp/
+*.log
+.DS_Store

@@ -1,0 +1,6 @@
+.agents
+.env
+.git
+target
+tests
+*.md

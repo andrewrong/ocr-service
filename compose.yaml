@@ -1,0 +1,36 @@
+name: ocr-service
+
+services:
+  ocr-service:
+    image: ocr-service:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["serve", "--port", "8100"]
+    ports:
+      - "${OCR_BIND_ADDRESS:-127.0.0.1}:${OCR_PORT:-18100}:8100"
+    environment:
+      OCR_OLLAMA_URL: "${OCR_OLLAMA_URL:-http://host.docker.internal:11434}"
+      OCR_REQUEST_TIMEOUT_SECS: "${OCR_REQUEST_TIMEOUT_SECS:-300}"
+      OCR_MAX_CONCURRENT_PAGES: "${OCR_MAX_CONCURRENT_PAGES:-4}"
+      OCR_MAX_UPLOAD_BYTES: "${OCR_MAX_UPLOAD_BYTES:-104857600}"
+      OCR_PDF_DPI: "${OCR_PDF_DPI:-180}"
+      RUST_LOG: "${RUST_LOG:-ocr_service=info}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8100/ocr/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 30s
