@@ -1,0 +1,229 @@
+openapi: 3.1.0
+info:
+  title: Local OCR Service
+  version: 1.0.0
+  description: |
+    Stable HTTP contract for converting images and PDFs to Markdown.
+    Model selection, per-model timeouts, and timeout fallback are handled by the server.
+    The service has no built-in authentication and should remain on a trusted local interface
+    unless an authenticated reverse proxy is placed in front of it.
+servers:
+  - url: http://127.0.0.1:18100
+    description: macOS host
+  - url: http://host.docker.internal:18100
+    description: Docker container calling the macOS host
+tags:
+  - name: OCR
+  - name: Operations
+paths:
+  /v1/ocr/health:
+    get:
+      tags: [Operations]
+      operationId: getOcrHealth
+      summary: Check Ollama and OCR model availability
+      responses:
+        "200":
+          description: At least one OCR model is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Ollama is unavailable or no configured OCR model is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/ocr/image:
+    post:
+      tags: [OCR]
+      operationId: recognizeImage
+      summary: Convert one image to Markdown
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ImageUpload"
+      responses:
+        "200":
+          description: OCR completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "502":
+          $ref: "#/components/responses/UpstreamFailure"
+  /v1/ocr/pdf:
+    post:
+      tags: [OCR]
+      operationId: recognizePdf
+      summary: Render selected PDF pages and convert them to Markdown
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PdfUpload"
+      responses:
+        "200":
+          description: OCR completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "502":
+          $ref: "#/components/responses/UpstreamFailure"
+  /ocr/health:
+    get:
+      deprecated: true
+      tags: [Operations]
+      operationId: getLegacyOcrHealth
+      summary: Legacy alias for /v1/ocr/health
+      responses:
+        "200":
+          description: At least one OCR model is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: OCR is degraded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /ocr/image:
+    post:
+      deprecated: true
+      tags: [OCR]
+      operationId: recognizeLegacyImage
+      summary: Legacy alias for /v1/ocr/image
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ImageUpload"
+      responses:
+        "200":
+          description: OCR completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrResponse"
+  /ocr/pdf:
+    post:
+      deprecated: true
+      tags: [OCR]
+      operationId: recognizeLegacyPdf
+      summary: Legacy alias for /v1/ocr/pdf
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/PdfUpload"
+      responses:
+        "200":
+          description: OCR completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OcrResponse"
+components:
+  schemas:
+    Engine:
+      type: string
+      enum: [auto, paddle, glm, qwen]
+      default: auto
+      description: Requested OCR strategy. Auto lets the server choose and fall back on timeout.
+    ImageUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+        engine:
+          $ref: "#/components/schemas/Engine"
+    PdfUpload:
+      allOf:
+        - $ref: "#/components/schemas/ImageUpload"
+        - type: object
+          properties:
+            page_range:
+              type: string
+              pattern: "^[1-9][0-9]*(?:-[1-9][0-9]*)?$"
+              examples: ["1", "2-7"]
+              description: Optional inclusive one-based page or page range.
+    OcrResponse:
+      type: object
+      required: [markdown, engine, pages, duration_ms]
+      properties:
+        markdown:
+          type: string
+          description: Recognized document content in Markdown.
+        engine:
+          type: string
+          enum: [paddle, glm, qwen, mixed]
+          description: Engine used, or mixed when PDF pages used different fallback engines.
+        pages:
+          type: integer
+          minimum: 1
+        duration_ms:
+          type: integer
+          minimum: 0
+    HealthResponse:
+      type: object
+      required: [status, ollama, models]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        ollama:
+          type: boolean
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelStatus"
+    ModelStatus:
+      type: object
+      required: [engine, name, available]
+      properties:
+        engine:
+          type: string
+          enum: [paddle, glm, qwen]
+        name:
+          type: string
+        available:
+          type: boolean
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+  responses:
+    BadRequest:
+      description: Invalid multipart upload, engine, PDF, or page range
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    PayloadTooLarge:
+      description: Upload exceeds the configured request body limit
+    UpstreamFailure:
+      description: Ollama, a configured model, or page processing failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

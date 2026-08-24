@@ -4,7 +4,7 @@ use anyhow::Context;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Multipart, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -35,9 +35,20 @@ pub fn router(config: Config) -> anyhow::Result<Router> {
         .route("/ocr/health", get(health))
         .route("/ocr/image", post(ocr_image))
         .route("/ocr/pdf", post(ocr_pdf))
+        .route("/v1/ocr/health", get(health))
+        .route("/v1/ocr/image", post(ocr_image))
+        .route("/v1/ocr/pdf", post(ocr_pdf))
+        .route("/openapi.yaml", get(openapi_contract))
         .layer(DefaultBodyLimit::max(max_upload_bytes))
         .layer(TraceLayer::new_for_http())
         .with_state(state))
+}
+
+async fn openapi_contract() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/yaml; charset=utf-8")],
+        include_str!("../../openapi.yaml"),
+    )
 }
 
 async fn ocr_image(
@@ -261,8 +272,12 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::response_engine;
-    use crate::models::Engine;
+    use axum::{body::Body, http::Request};
+    use serde_yaml::Value;
+    use tower::ServiceExt;
+
+    use super::{response_engine, router};
+    use crate::{config::Config, models::Engine};
 
     #[test]
     fn response_engine_marks_mixed_page_engines() {
@@ -274,5 +289,82 @@ mod tests {
             response_engine(&[Engine::Glm, Engine::Glm], Engine::Paddle),
             "glm"
         );
+    }
+
+    #[tokio::test]
+    async fn versioned_routes_are_registered_without_removing_legacy_routes() {
+        let app = router(Config::default()).expect("router should initialize");
+
+        for path in ["/ocr/image", "/ocr/pdf", "/v1/ocr/image", "/v1/ocr/pdf"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("request should build"),
+                )
+                .await
+                .expect("router should respond");
+
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::METHOD_NOT_ALLOWED,
+                "POST route {path} should exist"
+            );
+        }
+
+        for path in ["/ocr/health", "/v1/ocr/health"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .expect("request should build"),
+                )
+                .await
+                .expect("router should respond");
+
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::METHOD_NOT_ALLOWED,
+                "GET route {path} should exist"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn openapi_contract_is_served_and_defines_public_routes() {
+        let app = router(Config::default()).expect("router should initialize");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi.yaml")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        let contract =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/openapi.yaml"))
+                .expect("openapi.yaml should exist");
+        let document: Value =
+            serde_yaml::from_str(&contract).expect("OpenAPI should be valid YAML");
+        let paths = document["paths"]
+            .as_mapping()
+            .expect("OpenAPI paths should be a mapping");
+
+        for path in ["/v1/ocr/health", "/v1/ocr/image", "/v1/ocr/pdf"] {
+            assert!(
+                paths.contains_key(Value::String(path.to_owned())),
+                "OpenAPI should document {path}"
+            );
+        }
     }
 }

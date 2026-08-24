@@ -1,9 +1,23 @@
-/target
+# Local configuration and secrets
 .env
 .env.*
 !.env.example
-.safehouse
-/output/
-/tmp/
+*.pem
+*.key
+*.p12
+
+# Runtime output
 *.log
+logs/
+target/
+output/
+tmp/
 .DS_Store
+.safehouse
+
+# Python SDK development
+sdk/python/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

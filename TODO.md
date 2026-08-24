@@ -66,3 +66,42 @@
 第 5 页使用 Paddle 超过 30 秒后自动回退 GLM，其余页面继续使用 Paddle。前 10 页真实
 回归在 93 秒内返回 HTTP 200，响应包含 10 页 Markdown，并以 `engine: "mixed"` 标记混合模型。
 单元测试、Rust fmt 和 clippy 均通过。
+
+## Phase 8: 标准化外部接入
+
+- [x] 保留现有 `/ocr/*` 路由并增加版本化 `/v1/ocr/*` 路由
+- [x] 提供可机器读取的 OpenAPI 3.1 契约
+- [x] 编写面向宿主机、Docker 和远程调用方的接入文档
+- [x] 提供 Python SDK，以统一 `recognize()` 接口隐藏图片/PDF路由和 multipart 上传
+- [x] 增加 HTTP 路由兼容性测试和 Python SDK 单元测试
+- [x] 运行 Rust/Python 测试、fmt、clippy 和敏感信息扫描
+
+### Review
+
+新增 `/v1/ocr/health`、`/v1/ocr/image`、`/v1/ocr/pdf` 和 `/openapi.yaml`，原有
+`/ocr/*` 路由继续工作。Python SDK 使用单一异步 `recognize()` 接口自动识别 PDF、选择
+路由、构造 multipart、校验页码并统一错误；版本化路由返回 404 时仅回退到对应旧路由，
+已用仍未重建的 18100 部署验证兼容性。
+
+OpenAPI 3.1 校验、Skill 校验、Rust fmt、11 个 Rust 测试、Clippy、Ruff、6 个 Python 测试
+和候选文件敏感信息扫描均通过。临时源码实例验证了 OpenAPI、旧/新路由行为、Skill 健康
+检查和 SDK 健康检查。
+
+## Phase 9: Go SDK
+
+- [x] 使用 Go 标准库实现 OCR 客户端，不增加运行时依赖
+- [x] 提供统一 `Recognize`、`Health`、类型化结果和错误
+- [x] 自动识别图片/PDF，校验引擎和 PDF 页码范围
+- [x] 支持流式 multipart 上传和 `/v1` 到旧路由的滚动部署回退
+- [x] 编写 SDK 文档、示例和单元测试
+- [x] 运行 gofmt、go test、go vet、真实健康检查和敏感信息扫描
+
+### Review
+
+新增无第三方运行时依赖的 Go SDK。`Recognize` 隐藏图片/PDF判断、选项校验、流式
+multipart 上传、响应解析和旧路由回退，`Health` 在 HTTP 503 时仍返回可检查的降级状态；
+调用方可注入共享 `http.Client` 或配置整体超时。
+
+6 个隔离单元测试、gofmt、go test、go vet 和 race detector 均通过。另通过
+`OCR_LIVE_TEST_URL=http://127.0.0.1:18100` 对当前旧部署完成真实健康检查，确认 `/v1`
+返回 404 时可以回退到旧健康路由。

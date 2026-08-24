@@ -25,6 +25,25 @@ curl -fsS http://127.0.0.1:18100/ocr/health | jq
 
 Stop it with `docker compose down`. The API port binds to `127.0.0.1` by default.
 
+## Integrate another service
+
+Use the versioned HTTP routes for new callers:
+
+```bash
+curl --fail-with-body \
+  --form "file=@document.pdf" \
+  --form "engine=auto" \
+  --form "page_range=1-10" \
+  http://127.0.0.1:18100/v1/ocr/pdf
+```
+
+The OpenAPI 3.1 contract is stored in [`openapi.yaml`](openapi.yaml) and served at
+`GET /openapi.yaml`. Detailed curl, Docker, timeout, response, and security guidance lives in
+[`docs/integration.md`](docs/integration.md). Python callers can install the typed asynchronous
+client from [`sdk/python`](sdk/python) and use one `OcrClient.recognize()` method for images and
+PDFs. Go callers can use the dependency-free streaming client in [`sdk/go`](sdk/go). Existing
+`/ocr/*` routes remain available for compatibility.
+
 ## Agent Skill
 
 The project Skill lives at `.agents/skills/ocr-local-service`. It uploads host files over HTTP, so the service container needs no filesystem mounts.

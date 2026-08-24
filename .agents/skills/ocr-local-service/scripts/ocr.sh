@@ -87,22 +87,34 @@ curl_common=(
   --write-out '%{http_code}'
 )
 
+request_with_legacy_fallback() {
+  local versioned_path="$1"
+  local legacy_path="$2"
+  shift 2
+
+  local response_status
+  response_status="$(curl "${curl_common[@]}" "$@" "$base_url$versioned_path")"
+  if [[ "$response_status" == "404" ]]; then
+    response_status="$(curl "${curl_common[@]}" "$@" "$base_url$legacy_path")"
+  fi
+  printf '%s' "$response_status"
+}
+
 case "$operation" in
   health)
-    status="$(curl "${curl_common[@]}" "$base_url/ocr/health")"
+    status="$(request_with_legacy_fallback "/v1/ocr/health" "/ocr/health")"
     ;;
   image)
-    status="$(curl "${curl_common[@]}" \
+    status="$(request_with_legacy_fallback "/v1/ocr/image" "/ocr/image" \
       --form "file=@$file" \
-      --form "engine=$engine" \
-      "$base_url/ocr/image")"
+      --form "engine=$engine")"
     ;;
   pdf)
     form_args=(--form "file=@$file" --form "engine=$engine")
     if [[ -n "$page_range" ]]; then
       form_args+=(--form "page_range=$page_range")
     fi
-    status="$(curl "${curl_common[@]}" "${form_args[@]}" "$base_url/ocr/pdf")"
+    status="$(request_with_legacy_fallback "/v1/ocr/pdf" "/ocr/pdf" "${form_args[@]}")"
     ;;
   *)
     usage
