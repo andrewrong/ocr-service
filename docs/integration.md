@@ -95,14 +95,14 @@ returns HTTP 404.
 
 ## Go client
 
-The dependency-free Go client lives in `sdk/go`. Until the repository is published, use a local
-module replacement:
+The dependency-free Go client lives in `sdk/go`. Install the tagged module directly from GitHub:
 
 ```bash
-go mod edit -require=github.com/your-org/ocr-service/sdk/go@v0.0.0
-go mod edit -replace=github.com/your-org/ocr-service/sdk/go=/path/to/ocr-service/sdk/go
-go mod tidy
+go get github.com/andrewrong/ocr-service/sdk/go@v0.1.0
 ```
+
+For local SDK development, add a temporary replacement with
+`go mod edit -replace=github.com/andrewrong/ocr-service/sdk/go=/path/to/ocr-service/sdk/go`.
 
 ```go
 client, err := ocrclient.NewClient("http://host.docker.internal:18100")

@@ -3,17 +3,19 @@
 Dependency-free Go adapter for the local OCR service. It supports images and PDFs through one
 `Recognize` method and streams multipart uploads instead of loading the entire file into memory.
 
-## Local installation
+## Installation
 
-Until the repository is published, point the consuming module at this checkout:
+Install a tagged release directly from GitHub:
 
 ```bash
-go mod edit -require=github.com/your-org/ocr-service/sdk/go@v0.0.0
-go mod edit -replace=github.com/your-org/ocr-service/sdk/go=/path/to/ocr-service/sdk/go
-go mod tidy
+go get github.com/andrewrong/ocr-service/sdk/go@v0.1.0
 ```
 
-After publishing the repository, remove the `replace` directive and use a tagged SDK release.
+For local SDK development, temporarily point the module at a checkout:
+
+```bash
+go mod edit -replace=github.com/andrewrong/ocr-service/sdk/go=/path/to/ocr-service/sdk/go
+```
 
 ## Usage
 
@@ -25,7 +27,7 @@ import (
 	"fmt"
 	"log"
 
-	ocrclient "github.com/your-org/ocr-service/sdk/go"
+	ocrclient "github.com/andrewrong/ocr-service/sdk/go"
 )
 
 func main() {
