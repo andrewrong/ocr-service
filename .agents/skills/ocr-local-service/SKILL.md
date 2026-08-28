@@ -10,7 +10,7 @@ Use `scripts/ocr.sh` relative to this file. It depends on `curl` and `jq`; overr
 ## Workflow
 
 1. Resolve the input to a readable local file path and determine whether it is an image or PDF.
-2. Run `bash scripts/ocr.sh health` once per turn. Continue when Ollama is reachable; surface the returned health details when it is degraded.
+2. Run `bash scripts/ocr.sh health` once per turn. Continue when the configured inference backend is reachable; surface the returned health details when it is degraded.
 3. Run the matching command. Use `auto` unless the user requests an engine. Add `--pages` only for a requested PDF page or inclusive range.
 4. Return the Markdown written to stdout faithfully. Summarize or transform it only when the user asks.
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from ocr_service_client import OcrClient, OcrServiceError
+from ocr_service_client import HealthResult, ModelStatus, OcrClient, OcrServiceError
 
 
 @pytest.mark.asyncio
@@ -114,6 +114,8 @@ async def test_health_returns_model_availability() -> None:
             200,
             json={
                 "status": "ok",
+                "backend": "lmstudio",
+                "backend_ready": True,
                 "ollama": True,
                 "models": [
                     {"engine": "paddle", "name": "paddle-model", "available": True},
@@ -127,8 +129,42 @@ async def test_health_returns_model_availability() -> None:
         health = await client.health()
 
     assert health.ready is True
+    assert health.backend == "lmstudio"
     assert health.models[0].engine == "paddle"
     assert health.models[1].available is False
+
+
+@pytest.mark.asyncio
+async def test_health_accepts_legacy_ollama_readiness() -> None:
+    """Keep clients compatible with servers released before backend-neutral health fields."""
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "ollama": True,
+                "models": [{"engine": "qwen", "name": "qwen-model", "available": True}],
+            },
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = OcrClient("http://ocr.test", http_client=http_client)
+        health = await client.health()
+
+    assert health.backend == "ollama"
+    assert health.backend_ready is True
+    assert health.ready is True
+
+
+def test_health_result_keeps_legacy_positional_constructor() -> None:
+    """Adding backend-neutral fields must not break callers constructing SDK results directly."""
+    model = ModelStatus(engine="qwen", name="qwen-model", available=True)
+
+    health = HealthResult("ok", True, (model,))
+
+    assert health.backend == "ollama"
+    assert health.backend_ready is None
+    assert health.ready is True
 
 
 @pytest.mark.asyncio

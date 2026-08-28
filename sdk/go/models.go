@@ -39,14 +39,21 @@ type ModelStatus struct {
 
 // HealthResult contains service and model availability.
 type HealthResult struct {
-	Status string        `json:"status"`
+	Status       string `json:"status"`
+	Backend      string `json:"backend"`
+	BackendReady bool   `json:"backend_ready"`
+	// Ollama is a deprecated readiness alias retained for older service responses.
 	Ollama bool          `json:"ollama"`
 	Models []ModelStatus `json:"models"`
 }
 
-// Ready reports whether Ollama and at least one OCR model are available.
+// Ready reports whether the inference backend and at least one OCR model are available.
 func (health HealthResult) Ready() bool {
-	if !health.Ollama {
+	backendReady := health.BackendReady
+	if health.Backend == "" {
+		backendReady = health.Ollama
+	}
+	if !backendReady {
 		return false
 	}
 	for _, model := range health.Models {

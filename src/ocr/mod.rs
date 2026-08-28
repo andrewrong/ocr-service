@@ -1,3 +1,4 @@
+mod backend;
 pub mod engine;
 pub mod merger;
 pub mod pdf;

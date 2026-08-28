@@ -29,8 +29,11 @@ class HealthResult:
     status: str
     ollama: bool
     models: tuple[ModelStatus, ...]
+    backend: str = "ollama"
+    backend_ready: bool | None = None
 
     @property
     def ready(self) -> bool:
         """Return whether at least one OCR model can accept requests."""
-        return self.ollama and any(model.available for model in self.models)
+        backend_ready = self.ollama if self.backend_ready is None else self.backend_ready
+        return backend_ready and any(model.available for model in self.models)

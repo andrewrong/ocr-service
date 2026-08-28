@@ -105,3 +105,26 @@ multipart 上传、响应解析和旧路由回退，`Health` 在 HTTP 503 时仍
 6 个隔离单元测试、gofmt、go test、go vet 和 race detector 均通过。另通过
 `OCR_LIVE_TEST_URL=http://127.0.0.1:18100` 对当前旧部署完成真实健康检查，确认 `/v1`
 返回 404 时可以回退到旧健康路由。
+
+## Phase 10: 多本地推理后端
+
+- [x] 调研 Ollama、LM Studio、llama.cpp 的共同视觉推理协议
+- [x] 评估 async-openai、rust-genai、rig 与直接 HTTP adapter
+- [x] 使用统一 OpenAI-compatible Chat Completions 和模型列表接口
+- [x] 增加 `ollama`、`lmstudio`、`llamacpp` 后端配置和可选 Bearer token
+- [x] 保持 OCR HTTP 路由兼容，并扩展后端中立健康字段
+- [x] 让超时和上游模型错误都进入下一模型槽
+- [x] 使用隔离的 LM Studio-compatible 服务验证图片、模型列表、鉴权和回退协议
+- [x] 验证本机 LM Studio 的真实模型列表和视觉能力元数据
+- [ ] 部署前使用选定的轻量视觉模型验收图片和 10 页 PDF
+
+### Review
+
+实现采用现有 reqwest/serde，而不是引入覆盖 Agent、工具和多云供应商的大型依赖。内部
+adapter 只暴露转录和模型列表能力，外部 OCR 路由、PDF 管线和 SDK 识别接口保持不变。
+旧 `OCR_OLLAMA_URL` 和健康响应中的 `ollama` 字段作为兼容别名保留。
+
+本机 LM Studio API 可连接并能返回标准模型列表；当前安装的视觉模型体积过大，不将其作为
+本功能的性能或部署验收模型。代码验收使用隔离的 OpenAI-compatible 测试服务，不加载或
+下载真实模型。部署验收应显式选择适合机器资源的视觉模型，并将它的精确 model ID 映射到
+至少一个逻辑 OCR 模型槽。

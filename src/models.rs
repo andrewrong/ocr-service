@@ -50,6 +50,9 @@ pub struct OcrResponse {
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
+    pub backend: String,
+    pub backend_ready: bool,
+    /// Deprecated readiness alias retained for SDKs released before backend selection existed.
     pub ollama: bool,
     pub models: Vec<ModelStatus>,
 }

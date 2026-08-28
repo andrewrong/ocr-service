@@ -19,6 +19,35 @@ OCR_SERVICE_URL=http://host.docker.internal:18100
 The deployment binds to the local host by default and does not implement authentication. Do not
 publish it to a LAN or the internet without an authenticated reverse proxy and TLS.
 
+## Inference backend
+
+The service uses one OpenAI-compatible adapter for Ollama, LM Studio, and llama.cpp. Select it with
+environment variables on the OCR service container:
+
+```bash
+OCR_INFERENCE_BACKEND=lmstudio
+OCR_INFERENCE_URL=http://host.docker.internal:1234
+OCR_INFERENCE_API_TOKEN=
+```
+
+`OCR_INFERENCE_URL` is the server root; a trailing `/v1` is accepted and normalized. The default
+URLs are `http://127.0.0.1:11434` for Ollama, `http://127.0.0.1:1234` for LM Studio, and
+`http://127.0.0.1:8080` for llama.cpp. `OCR_OLLAMA_URL` remains a legacy fallback when the selected
+backend is Ollama.
+
+Map the logical OCR engines to model identifiers returned by the selected runtime's `/v1/models`:
+
+```bash
+OCR_PADDLE_MODEL=<primary-vision-model-id>
+OCR_GLM_MODEL=<first-fallback-model-id>
+OCR_QWEN_MODEL=<second-fallback-model-id>
+```
+
+The names `paddle`, `glm`, and `qwen` in the public OCR request remain stable logical slots. They do
+not require a model from that family, which allows a runtime with fewer compatible models to reuse
+one model ID or substitute another vision model. Both timeouts and upstream model errors advance to
+the next slot; repeated model IDs are attempted only once per page.
+
 ## HTTP contract
 
 The machine-readable OpenAPI 3.1 contract is available in the repository as `openapi.yaml` and

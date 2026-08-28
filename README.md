@@ -1,10 +1,18 @@
 # OCR Service
 
-Local HTTP OCR service backed by Ollama. Docker contains the Rust API and Poppler; Ollama and its models stay on the macOS host for Metal acceleration.
+Local HTTP OCR service backed by an OpenAI-compatible local model runtime. Ollama is the default;
+LM Studio and llama.cpp are also supported. Docker contains the Rust HTTP layer and Poppler while
+models stay on the macOS host for Metal acceleration.
 
 ## Deploy
 
-Prerequisites: OrbStack, Ollama, PaddleOCR-VL 1.6, GLM OCR, and Qwen3-VL 8B.
+Prerequisites: OrbStack and at least one supported local runtime with a vision model.
+
+| Runtime | `OCR_INFERENCE_BACKEND` | Default host port |
+|---|---|---|
+| Ollama | `ollama` | `11434` |
+| LM Studio | `lmstudio` | `1234` |
+| llama.cpp | `llamacpp` | `8080` |
 
 Allow the container to reach Ollama, then restart the Ollama application:
 
@@ -12,7 +20,26 @@ Allow the container to reach Ollama, then restart the Ollama application:
 launchctl setenv OLLAMA_HOST 0.0.0.0:11434
 ```
 
-Binding Ollama to all interfaces can expose it to the local network. Keep the macOS firewall enabled or restrict access with local firewall rules.
+For LM Studio, start its server on a container-accessible address:
+
+```bash
+lms server start --port 1234 --bind 0.0.0.0
+```
+
+Then configure `.env`:
+
+```bash
+OCR_INFERENCE_BACKEND=lmstudio
+OCR_INFERENCE_URL=http://host.docker.internal:1234
+OCR_INFERENCE_API_TOKEN=
+OCR_PADDLE_MODEL=<primary-vision-model-id>
+OCR_GLM_MODEL=<first-fallback-model-id>
+OCR_QWEN_MODEL=<second-fallback-model-id>
+```
+
+Use `curl http://127.0.0.1:1234/v1/models | jq -r '.data[].id'` to obtain exact model IDs.
+LM Studio can require an API token; set it in `OCR_INFERENCE_API_TOKEN`. Binding any runtime to all
+interfaces can expose it to the local network, so use authentication and firewall restrictions.
 
 Start and verify the service:
 
@@ -68,7 +95,8 @@ seconds for Paddle, 60 seconds for GLM, and 120 seconds for Qwen. Override them 
 `OCR_PADDLE_TIMEOUT_SECS`, `OCR_GLM_TIMEOUT_SECS`, and `OCR_QWEN_TIMEOUT_SECS`.
 
 `auto` and `paddle` try Paddle, GLM, then Qwen. `glm` tries GLM, Paddle, then Qwen. `qwen` tries
-Qwen, GLM, then Paddle. Fallback happens only after a timeout; other upstream errors are returned
-immediately. A PDF response reports `engine: "mixed"` when different pages use different models.
-Ollama model calls default to one active request (`OCR_MAX_CONCURRENT_MODEL_REQUESTS=1`) so queue
-time is not mistaken for model execution time; PDF page rendering and preparation remain concurrent.
+Qwen, GLM, then Paddle. Timeout and upstream model errors both advance to the next configured model.
+A PDF response reports `engine: "mixed"` when different pages use different models. Inference calls
+default to one active request (`OCR_MAX_CONCURRENT_MODEL_REQUESTS=1`) so queue time is not mistaken
+for model execution time; PDF page rendering and preparation remain concurrent. When multiple
+logical slots use the same model ID, that model is attempted only once per page.

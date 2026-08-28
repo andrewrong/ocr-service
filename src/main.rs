@@ -10,7 +10,7 @@ use tracing_subscriber::EnvFilter;
 #[command(
     name = "ocr-service",
     version,
-    about = "Local Ollama-powered OCR service"
+    about = "Local model-powered OCR service"
 )]
 struct Cli {
     #[command(subcommand)]

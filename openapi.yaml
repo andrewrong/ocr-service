@@ -20,7 +20,7 @@ paths:
     get:
       tags: [Operations]
       operationId: getOcrHealth
-      summary: Check Ollama and OCR model availability
+      summary: Check the inference backend and OCR model availability
       responses:
         "200":
           description: At least one OCR model is available
@@ -29,7 +29,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
         "503":
-          description: Ollama is unavailable or no configured OCR model is available
+          description: The inference backend is unavailable or no configured OCR model is available
           content:
             application/json:
               schema:
@@ -184,13 +184,22 @@ components:
           minimum: 0
     HealthResponse:
       type: object
-      required: [status, ollama, models]
+      required: [status, backend, backend_ready, ollama, models]
       properties:
         status:
           type: string
           enum: [ok, degraded]
+        backend:
+          type: string
+          enum: [ollama, lmstudio, llamacpp]
+          description: Configured local inference backend.
+        backend_ready:
+          type: boolean
+          description: Whether the configured inference backend answered the model-list request.
         ollama:
           type: boolean
+          deprecated: true
+          description: Deprecated alias of backend_ready retained for older SDK releases.
         models:
           type: array
           items:
@@ -222,7 +231,7 @@ components:
     PayloadTooLarge:
       description: Upload exceeds the configured request body limit
     UpstreamFailure:
-      description: Ollama, a configured model, or page processing failed
+      description: The inference backend, a configured model, or page processing failed
       content:
         application/json:
           schema:

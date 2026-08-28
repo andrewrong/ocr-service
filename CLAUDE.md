@@ -4,18 +4,20 @@
 
 ## 项目概述
 
-Rust 编写的 OCR 服务，通过 Ollama 调用本地视觉模型，支持 PDF 和图片的文字识别，输出 Markdown 格式。服务以 Docker Compose 常驻 HTTP API 运行，Agent 通过项目 Skill 调用。
+Rust 编写的 OCR 服务，通过统一 OpenAI-compatible adapter 调用 Ollama、LM Studio 或 llama.cpp
+中的本地视觉模型，支持 PDF 和图片文字识别并输出 Markdown。服务以 Docker Compose 常驻
+HTTP API 运行，Agent 通过项目 Skill 调用。
 
 ## 架构
 
 - **HTTP 服务层**: axum，提供 REST API
 - **Agent 集成层**: `.agents/skills/ocr-local-service`，通过 HTTP 上传本地文件
-- **OCR 引擎层**: 统一封装 Ollama API，支持三个模型切换
+- **OCR 引擎层**: 统一封装 OpenAI-compatible Chat Completions，支持三个逻辑模型槽切换
 - **PDF 处理层**: poppler pdftoppm 拆页，逐页 OCR 后合并
 
 ## 支持的模型
 
-| 模型 | Ollama 名称 | 用途 |
+| 模型槽 | 默认 Ollama 名称 | 用途 |
 |---|---|---|
 | PaddleOCR-VL-1.6 | `hf.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF` | 默认引擎，SOTA 精度 (96.33) |
 | glm-ocr | `glm-ocr` | 备选引擎 (94.62) |
@@ -34,11 +36,15 @@ Rust 编写的 OCR 服务，通过 Ollama 调用本地视觉模型，支持 PDF 
 - `POST /ocr/image` — 图片 OCR，参数: file, engine
 - `GET /ocr/health` — 健康检查
 
-模型单页默认超时为 Paddle 30 秒、GLM 60 秒、Qwen 120 秒。模型超时后自动回退；多页使用不同模型时响应的 `engine` 为 `mixed`。Ollama 模型调用默认串行执行，避免排队时间被误判为模型超时。
+模型单页默认超时为 Paddle 30 秒、GLM 60 秒、Qwen 120 秒。模型超时或上游模型错误后自动
+回退；多页使用不同模型时响应的 `engine` 为 `mixed`。模型调用默认串行执行，避免排队时间
+被误判为模型超时。
 
 ## 外部依赖
 
-- Ollama 运行在宿主机 11434；容器通过 `host.docker.internal` 连接
+- 本地推理后端运行在宿主机；容器通过 `host.docker.internal` 连接
+- `OCR_INFERENCE_BACKEND` 支持 `ollama`、`lmstudio`、`llamacpp`
+- `OCR_INFERENCE_URL` 配置推理服务根地址，`OCR_INFERENCE_API_TOKEN` 可选
 - poppler (`pdftoppm`) 已包含在运行时镜像
 - Skill 客户端依赖宿主机的 `curl` 和 `jq`
 

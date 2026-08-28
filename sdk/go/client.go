@@ -155,7 +155,7 @@ func (client *Client) Recognize(
 	return &result, nil
 }
 
-// Health returns Ollama and configured model availability. A structured HTTP
+// Health returns inference backend and configured model availability. A structured HTTP
 // 503 response is returned as a degraded HealthResult rather than an error.
 func (client *Client) Health(ctx context.Context) (*HealthResult, error) {
 	response, err := client.getWithLegacyFallback(ctx, "/v1/ocr/health", "/ocr/health")

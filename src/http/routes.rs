@@ -129,6 +129,7 @@ fn response_engine(used_engines: &[Engine], default: Engine) -> String {
 }
 
 async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
+    let backend = state.config.inference_backend.to_string();
     match state.ocr.health().await {
         Ok(models) => {
             let ready = models.iter().any(|model| model.available);
@@ -140,13 +141,15 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
                 },
                 Json(HealthResponse {
                     status: if ready { "ok" } else { "degraded" },
+                    backend,
+                    backend_ready: true,
                     ollama: true,
                     models,
                 }),
             )
         }
         Err(error) => {
-            tracing::warn!(%error, "Ollama health check failed");
+            tracing::warn!(backend, %error, "inference backend health check failed");
             let models = [Engine::Paddle, Engine::Glm, Engine::Qwen]
                 .into_iter()
                 .map(|engine| ModelStatus {
@@ -159,6 +162,8 @@ async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthRespon
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(HealthResponse {
                     status: "degraded",
+                    backend,
+                    backend_ready: false,
                     ollama: false,
                     models,
                 }),
@@ -272,12 +277,21 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use axum::{body::Body, http::Request};
-    use serde_yaml::Value;
+    use axum::{
+        Json, Router,
+        body::{Body, to_bytes},
+        http::Request,
+        routing::get,
+    };
+    use serde_json::json;
+    use serde_yaml::Value as YamlValue;
     use tower::ServiceExt;
 
     use super::{response_engine, router};
-    use crate::{config::Config, models::Engine};
+    use crate::{
+        config::{Config, InferenceBackend},
+        models::Engine,
+    };
 
     #[test]
     fn response_engine_marks_mixed_page_engines() {
@@ -354,7 +368,7 @@ mod tests {
         let contract =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/openapi.yaml"))
                 .expect("openapi.yaml should exist");
-        let document: Value =
+        let document: YamlValue =
             serde_yaml::from_str(&contract).expect("OpenAPI should be valid YAML");
         let paths = document["paths"]
             .as_mapping()
@@ -362,9 +376,59 @@ mod tests {
 
         for path in ["/v1/ocr/health", "/v1/ocr/image", "/v1/ocr/pdf"] {
             assert!(
-                paths.contains_key(Value::String(path.to_owned())),
+                paths.contains_key(YamlValue::String(path.to_owned())),
                 "OpenAPI should document {path}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn health_reports_lmstudio_backend_and_visible_models() {
+        let inference = Router::new().route(
+            "/v1/models",
+            get(|| async {
+                Json(json!({
+                    "object": "list",
+                    "data": [{"id": "vision-test"}]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let address = listener.local_addr().expect("listener should have address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, inference)
+                .await
+                .expect("test server should run");
+        });
+        let app = router(Config {
+            inference_backend: InferenceBackend::LmStudio,
+            inference_url: format!("http://{address}"),
+            paddle_model: "vision-test".to_owned(),
+            ..Config::default()
+        })
+        .expect("router should initialize");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/ocr/health")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("health body should be readable");
+        let health: serde_json::Value =
+            serde_json::from_slice(&body).expect("health body should be JSON");
+        assert_eq!(health["backend"], "lmstudio");
+        assert_eq!(health["backend_ready"], true);
+        assert_eq!(health["models"][0]["available"], true);
+        server.abort();
     }
 }

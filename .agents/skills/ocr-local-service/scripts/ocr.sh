@@ -138,7 +138,7 @@ fi
 
 if [[ "$operation" == "health" ]]; then
   jq . "$response_file"
-  jq -e '.ollama == true' "$response_file" >/dev/null
+  jq -e '(if has("backend_ready") then .backend_ready else .ollama end) == true' "$response_file" >/dev/null
 elif [[ "$json_output" == true ]]; then
   jq . "$response_file"
 else

@@ -163,7 +163,7 @@ func TestHealthReturnsDegradedModelAvailability(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(response, `{"status":"degraded","ollama":false,"models":[{"engine":"paddle","name":"paddle-model","available":false}]}`)
+		fmt.Fprint(response, `{"status":"degraded","backend":"lmstudio","backend_ready":false,"ollama":false,"models":[{"engine":"paddle","name":"paddle-model","available":false}]}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -180,6 +180,28 @@ func TestHealthReturnsDegradedModelAvailability(t *testing.T) {
 	}
 	if len(health.Models) != 1 || health.Models[0].Engine != "paddle" {
 		t.Errorf("models = %#v", health.Models)
+	}
+}
+
+func TestHealthAcceptsLegacyOllamaReadiness(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(response, `{"status":"ok","ollama":true,"models":[{"engine":"qwen","name":"qwen-model","available":true}]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	health, err := client.Health(context.Background())
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if !health.Ready() {
+		t.Fatal("legacy Ollama health should remain ready")
 	}
 }
 

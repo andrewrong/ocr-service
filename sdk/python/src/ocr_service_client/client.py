@@ -110,7 +110,7 @@ class OcrClient:
             ) from error
 
     async def health(self) -> HealthResult:
-        """Return Ollama and configured model availability.
+        """Return inference backend and configured model availability.
 
         A structured degraded response (HTTP 503) is returned as a non-ready result so callers
         can inspect individual models. Other HTTP failures raise `OcrServiceError`.
@@ -134,7 +134,9 @@ class OcrClient:
             )
             return HealthResult(
                 status=str(payload["status"]),
-                ollama=bool(payload["ollama"]),
+                backend=str(payload.get("backend", "ollama")),
+                backend_ready=bool(payload.get("backend_ready", payload.get("ollama", False))),
+                ollama=bool(payload.get("ollama", False)),
                 models=models,
             )
         except (KeyError, TypeError, ValueError) as error:
