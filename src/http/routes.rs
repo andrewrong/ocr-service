@@ -13,7 +13,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     config::Config,
-    models::{Engine, ErrorResponse, HealthResponse, ModelStatus, OcrResponse},
+    models::{Engine, ErrorResponse, HealthResponse, OcrResponse},
     ocr::{OcrEngine, PageRange, PdfPages, merger::merge_pages},
 };
 
@@ -130,46 +130,23 @@ fn response_engine(used_engines: &[Engine], default: Engine) -> String {
 
 async fn health(State(state): State<AppState>) -> (StatusCode, Json<HealthResponse>) {
     let backend = state.config.inference_backend.to_string();
-    match state.ocr.health().await {
-        Ok(models) => {
-            let ready = models.iter().any(|model| model.available);
-            (
-                if ready {
-                    StatusCode::OK
-                } else {
-                    StatusCode::SERVICE_UNAVAILABLE
-                },
-                Json(HealthResponse {
-                    status: if ready { "ok" } else { "degraded" },
-                    backend,
-                    backend_ready: true,
-                    ollama: true,
-                    models,
-                }),
-            )
-        }
-        Err(error) => {
-            tracing::warn!(backend, %error, "inference backend health check failed");
-            let models = [Engine::Paddle, Engine::Glm, Engine::Qwen]
-                .into_iter()
-                .map(|engine| ModelStatus {
-                    engine,
-                    name: state.ocr.model_name(engine).to_owned(),
-                    available: false,
-                })
-                .collect();
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(HealthResponse {
-                    status: "degraded",
-                    backend,
-                    backend_ready: false,
-                    ollama: false,
-                    models,
-                }),
-            )
-        }
-    }
+    let (backend_ready, models, jina) = state.ocr.health_snapshot().await;
+    let ready = models.iter().any(|model| model.available);
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(HealthResponse {
+            status: if ready { "ok" } else { "degraded" },
+            backend,
+            backend_ready,
+            ollama: backend_ready,
+            models,
+            jina,
+        }),
+    )
 }
 
 struct Upload {
@@ -255,6 +232,12 @@ impl ApiError {
     }
 
     fn upstream(error: anyhow::Error) -> Self {
+        if error
+            .downcast_ref::<crate::ocr::JinaNotConfigured>()
+            .is_some()
+        {
+            return Self::bad_request(error);
+        }
         Self {
             status: StatusCode::BAD_GATEWAY,
             error,

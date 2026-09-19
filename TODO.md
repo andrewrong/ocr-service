@@ -1,5 +1,22 @@
 # OCR Service - 任务清单
 
+## Phase 11: Jina hosted OCR
+
+- [x] Confirm official hosted contract and local-runtime limitations using primary sources.
+- [x] Add explicit Jina engine, independent credentials, bounded retries and local fallback.
+- [x] Aggregate local/cloud health without paid inference; preserve legacy local fields.
+- [x] Integrate Python/Go SDK, Skill and Telegram without changing local defaults.
+- [x] Verify PDF pipeline, full suites, formatting, lint and candidate secret scan.
+- [ ] User configures private key, rebuilds containers and approves paid image/10-page PDF acceptance.
+
+Implementation uses an independent cloud adapter at the OCR engine seam. No model download or paid API calls are part of automated tests. Explicit Jina Telegram tasks disable durable whole-update replay to prevent repeated cloud usage.
+
+Review: 34 Rust tests, 9 Python SDK tests and 138 Telegram tests pass. Go tests/race/vet,
+Rust release build/fmt/Clippy, Ruff, Skill validation, Compose/OpenAPI YAML parsing and candidate
+Gitleaks scans pass. PDF acceptance covers actual Poppler rendering, page selection, Jina/local
+mixed output and Skill HTTP upload. Deployment Compose passes new cloud variables but contains
+no real key. Real cloud image/10-page PDF acceptance remains pending user opt-in.
+
 ## Phase 1: 基础搭建
 
 - [x] 初始化 Rust 项目 (cargo init)

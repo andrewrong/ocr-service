@@ -9,6 +9,39 @@ from ocr_service_client import HealthResult, ModelStatus, OcrClient, OcrServiceE
 
 
 @pytest.mark.asyncio
+async def test_explicit_jina_upload_and_cloud_only_readiness(tmp_path: Path) -> None:
+    """Jina selection crosses the client interface without needing the cloud key."""
+    image = tmp_path / "page.png"
+    image.write_bytes(b"png")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "backend": "ollama",
+                    "backend_ready": False,
+                    "ollama": False,
+                    "jina": {"configured": True, "reachable": True},
+                    "models": [{"engine": "jina", "name": "jina-ocr-v1", "available": True}],
+                },
+            )
+        assert b"jina" in await request.aread()
+        return httpx.Response(
+            200, json={"markdown": "cloud text", "engine": "jina", "pages": 1, "duration_ms": 10}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = OcrClient("http://ocr.test", http_client=http_client)
+        result = await client.recognize(image, engine="jina")
+        health = await client.health()
+    assert result.engine == "jina"
+    assert health.ready
+    assert health.jina is not None and health.jina.configured and health.jina.reachable
+
+
+@pytest.mark.asyncio
 async def test_recognize_image_hides_multipart_and_route_selection(tmp_path: Path) -> None:
     """Route image files to the versioned image endpoint and parse the result."""
     image = tmp_path / "receipt.png"

@@ -8,6 +8,7 @@ pub enum Engine {
     Paddle,
     Glm,
     Qwen,
+    Jina,
     #[default]
     Auto,
 }
@@ -18,6 +19,7 @@ impl fmt::Display for Engine {
             Self::Paddle => "paddle",
             Self::Glm => "glm",
             Self::Qwen => "qwen",
+            Self::Jina => "jina",
             Self::Auto => "auto",
         })
     }
@@ -31,9 +33,12 @@ impl FromStr for Engine {
             "paddle" => Ok(Self::Paddle),
             "glm" => Ok(Self::Glm),
             "qwen" => Ok(Self::Qwen),
+            "jina" => Ok(Self::Jina),
             "auto" | "" => Ok(Self::Auto),
             other => {
-                anyhow::bail!("unsupported engine {other:?}; expected auto, paddle, glm, or qwen")
+                anyhow::bail!(
+                    "unsupported engine {other:?}; expected auto, paddle, glm, qwen, or jina"
+                )
             }
         }
     }
@@ -55,6 +60,13 @@ pub struct HealthResponse {
     /// Deprecated readiness alias retained for SDKs released before backend selection existed.
     pub ollama: bool,
     pub models: Vec<ModelStatus>,
+    pub jina: JinaHealth,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JinaHealth {
+    pub configured: bool,
+    pub reachable: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -13,10 +13,10 @@ from typing import Any, Literal, cast
 import httpx
 
 from ocr_service_client.exceptions import OcrServiceError
-from ocr_service_client.models import HealthResult, ModelStatus, OcrResult
+from ocr_service_client.models import HealthResult, JinaHealth, ModelStatus, OcrResult
 
-Engine = Literal["auto", "paddle", "glm", "qwen"]
-_ENGINES = frozenset({"auto", "paddle", "glm", "qwen"})
+Engine = Literal["auto", "paddle", "glm", "qwen", "jina"]
+_ENGINES = frozenset({"auto", "paddle", "glm", "qwen", "jina"})
 _PAGE_RANGE_PATTERN = re.compile(r"^[1-9][0-9]*(?:-[1-9][0-9]*)?$")
 
 
@@ -138,6 +138,12 @@ class OcrClient:
                 backend_ready=bool(payload.get("backend_ready", payload.get("ollama", False))),
                 ollama=bool(payload.get("ollama", False)),
                 models=models,
+                jina=JinaHealth(
+                    configured=bool(payload["jina"]["configured"]),
+                    reachable=bool(payload["jina"]["reachable"]),
+                )
+                if payload.get("jina")
+                else None,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise OcrServiceError(
@@ -174,7 +180,7 @@ class OcrClient:
     def _validate_engine(engine: Engine | str) -> str:
         value = str(engine).strip().lower()
         if value not in _ENGINES:
-            raise ValueError("engine must be one of: auto, paddle, glm, qwen")
+            raise ValueError("engine must be one of: auto, paddle, glm, qwen, jina")
         return value
 
     @staticmethod

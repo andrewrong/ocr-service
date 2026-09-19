@@ -12,6 +12,45 @@ import (
 	"testing"
 )
 
+func TestExplicitJinaSelectionAndCloudOnlyReadiness(t *testing.T) {
+	image := writeTestFile(t, "page.png", []byte("png"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			fmt.Fprint(w, `{"status":"ok","backend":"ollama","backend_ready":false,"ollama":false,"jina":{"configured":true,"reachable":true},"models":[{"engine":"jina","name":"jina-ocr-v1","available":true}]}`)
+			return
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+		}
+		if r.FormValue("engine") != "jina" {
+			t.Error("expected explicit Jina")
+		}
+		fmt.Fprint(w, `{"markdown":"cloud text","engine":"jina","pages":1,"duration_ms":10}`)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Recognize(context.Background(), image, &RecognizeOptions{Engine: Engine("jina")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Engine != "jina" {
+		t.Error(result.Engine)
+	}
+	health, err := client.Health(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !health.Ready() {
+		t.Error("cloud-only service should be ready")
+	}
+	if health.Jina == nil || !health.Jina.Configured || !health.Jina.Reachable {
+		t.Error("missing Jina readiness details")
+	}
+}
+
 func TestRecognizeImageSelectsVersionedRouteAndParsesResult(t *testing.T) {
 	t.Parallel()
 

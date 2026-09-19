@@ -12,6 +12,8 @@ const (
 	EngineGLM Engine = "glm"
 	// EngineQwen starts with Qwen3-VL.
 	EngineQwen Engine = "qwen"
+	// EngineJina explicitly uploads document pages to Jina's hosted OCR API.
+	EngineJina Engine = "jina"
 )
 
 // RecognizeOptions controls one recognition request.
@@ -37,7 +39,13 @@ type ModelStatus struct {
 	Available bool   `json:"available"`
 }
 
-// HealthResult contains service and model availability.
+// JinaHealth describes configuration and metadata reachability, not key validation.
+type JinaHealth struct {
+	Configured bool `json:"configured"`
+	Reachable  bool `json:"reachable"`
+}
+
+// HealthResult contains local and optional cloud model availability.
 type HealthResult struct {
 	Status       string `json:"status"`
 	Backend      string `json:"backend"`
@@ -45,15 +53,12 @@ type HealthResult struct {
 	// Ollama is a deprecated readiness alias retained for older service responses.
 	Ollama bool          `json:"ollama"`
 	Models []ModelStatus `json:"models"`
+	Jina   *JinaHealth   `json:"jina,omitempty"`
 }
 
-// Ready reports whether the inference backend and at least one OCR model are available.
+// Ready reports whether any local or cloud OCR model is available.
 func (health HealthResult) Ready() bool {
-	backendReady := health.BackendReady
-	if health.Backend == "" {
-		backendReady = health.Ollama
-	}
-	if !backendReady {
+	if health.Status != "ok" {
 		return false
 	}
 	for _, model := range health.Models {

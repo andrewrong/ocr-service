@@ -59,6 +59,13 @@ The client validates engine and page options locally, detects PDFs by header or 
 the versioned `/v1/ocr/*` routes, and retries a matching legacy `/ocr/*` route only after HTTP 404.
 HTTP failures are returned as `*ocrclient.ServiceError`.
 
+Choose `EngineJina` to explicitly upload pages to Jina via the OCR server; the private key is
+configured on the server, not the SDK. `EngineAuto` stays local. Read the actual result engine
+because cloud failures can recover locally. `HealthResult.Jina` exposes optional configuration
+and metadata reachability; `Ready()` includes cloud-only availability without claiming the key
+or inference capacity is validated. Avoid automatic cloud upload replay after uncertain errors.
+Jina is not in the existing `v0.1.0` tag; use a local replacement until a new release is published.
+
 ## Verification
 
 ```bash

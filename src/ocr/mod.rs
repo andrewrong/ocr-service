@@ -1,4 +1,6 @@
 mod backend;
+mod jina;
+pub use jina::JinaNotConfigured;
 pub mod engine;
 pub mod merger;
 pub mod pdf;

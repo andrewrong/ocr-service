@@ -17,6 +17,8 @@ HTTP API 运行，Agent 通过项目 Skill 调用。
 
 ## 支持的模型
 
+额外的 `jina` 引擎调用官方云 API，仅在请求显式选择时上传图片/PDF页面；`auto` 和本地回退链不会自动使用云端。Key 只放部署目录私有 `.env`。云调用有界重试后回退 GLM/Paddle/Qwen；调用方读取响应中的实际引擎。配置、费用和健康检查限制见 `docs/integration.md`。
+
 | 模型槽 | 默认 Ollama 名称 | 用途 |
 |---|---|---|
 | PaddleOCR-VL-1.6 | `hf.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF` | 默认引擎，SOTA 精度 (96.33) |

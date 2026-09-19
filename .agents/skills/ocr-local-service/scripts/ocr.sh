@@ -4,8 +4,8 @@ set -euo pipefail
 usage() {
   echo "Usage:" >&2
   echo "  ocr.sh health [--json]" >&2
-  echo "  ocr.sh image FILE [--engine auto|paddle|glm|qwen] [--json]" >&2
-  echo "  ocr.sh pdf FILE [--engine auto|paddle|glm|qwen] [--pages N|N-M] [--json]" >&2
+  echo "  ocr.sh image FILE [--engine auto|paddle|glm|qwen|jina] [--json]" >&2
+  echo "  ocr.sh pdf FILE [--engine auto|paddle|glm|qwen|jina] [--pages N|N-M] [--json]" >&2
   exit 2
 }
 
@@ -63,7 +63,7 @@ while (($#)); do
 done
 
 case "$engine" in
-  auto|paddle|glm|qwen) ;;
+  auto|paddle|glm|qwen|jina) ;;
   *)
     echo "Unsupported engine: $engine" >&2
     exit 2

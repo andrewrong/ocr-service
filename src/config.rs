@@ -47,6 +47,9 @@ impl FromStr for InferenceBackend {
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub jina_api_key: Option<String>,
+    pub jina_base_url: String,
+    pub jina_timeout: Duration,
     pub inference_backend: InferenceBackend,
     pub inference_url: String,
     pub inference_api_token: Option<String>,
@@ -67,6 +70,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            jina_api_key: None,
+            jina_base_url: "https://api.jina.ai".to_owned(),
+            jina_timeout: Duration::from_secs(120),
             inference_backend: InferenceBackend::Ollama,
             inference_url: InferenceBackend::Ollama.default_url().to_owned(),
             inference_api_token: None,
@@ -104,6 +110,15 @@ impl Config {
             .unwrap_or_else(|| inference_backend.default_url().to_owned());
 
         let config = Self {
+            jina_api_key: env_optional_string("OCR_JINA_API_KEY"),
+            jina_base_url: normalize_inference_url(&env_string(
+                "OCR_JINA_BASE_URL",
+                defaults.jina_base_url,
+            )),
+            jina_timeout: Duration::from_secs(env_parse(
+                "OCR_JINA_TIMEOUT_SECS",
+                defaults.jina_timeout.as_secs(),
+            )?),
             inference_backend,
             inference_url: normalize_inference_url(&inference_url),
             inference_api_token: env_optional_string("OCR_INFERENCE_API_TOKEN"),
@@ -138,6 +153,13 @@ impl Config {
             max_upload_bytes: env_parse("OCR_MAX_UPLOAD_BYTES", defaults.max_upload_bytes)?,
             pdf_dpi: env_parse("OCR_PDF_DPI", defaults.pdf_dpi)?,
         };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate local settings and the optional cloud provider independently.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        let config = self;
         anyhow::ensure!(
             config.max_concurrent_pages > 0,
             "OCR_MAX_CONCURRENT_PAGES must be greater than zero"
@@ -168,12 +190,18 @@ impl Config {
             "OCR_MAX_CONCURRENT_MODEL_REQUESTS must be greater than zero"
         );
         anyhow::ensure!(
+            config.jina_api_key.is_none()
+                || (!config.jina_timeout.is_zero() && !config.jina_base_url.is_empty()),
+            "OCR_JINA_TIMEOUT_SECS and OCR_JINA_BASE_URL must be nonzero/nonempty"
+        );
+        anyhow::ensure!(
             config.request_timeout > config.paddle_timeout
                 && config.request_timeout > config.glm_timeout
-                && config.request_timeout > config.qwen_timeout,
+                && config.request_timeout > config.qwen_timeout
+                && (config.jina_api_key.is_none() || config.request_timeout > config.jina_timeout),
             "OCR_REQUEST_TIMEOUT_SECS must be greater than every model timeout"
         );
-        Ok(config)
+        Ok(())
     }
 
     pub fn model_names(&self) -> [&str; 3] {
@@ -185,6 +213,7 @@ impl Config {
             Engine::Paddle | Engine::Auto => self.paddle_timeout,
             Engine::Glm => self.glm_timeout,
             Engine::Qwen => self.qwen_timeout,
+            Engine::Jina => self.jina_timeout,
         }
     }
 }

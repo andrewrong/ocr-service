@@ -73,7 +73,7 @@ curl --fail-with-body \
   "$OCR_SERVICE_URL/v1/ocr/pdf"
 ```
 
-`engine` accepts `auto`, `paddle`, `glm`, or `qwen`. Prefer `auto`: the server owns model selection,
+`engine` accepts `auto`, `paddle`, `glm`, `qwen`, or explicit cloud `jina`. Prefer `auto`: the server owns model selection,
 per-model timeouts, and timeout fallback. `page_range` is inclusive, one-based, and valid only for
 PDFs.
 
@@ -91,6 +91,40 @@ A successful response has this shape:
 For a PDF, `engine` is `mixed` when different pages complete with different fallback engines.
 Invalid input returns HTTP 400, oversized requests return 413, and OCR/model failures return 502.
 Clients should allow up to 15 minutes for large PDFs.
+
+## Jina cloud OCR
+
+Only `engine=jina` uploads document pages to the hosted API. Existing local strategies never
+fall back to cloud. PDF rendering and page-range selection stay local; selected pages are
+uploaded individually. The upstream model is `jina-ocr-v1`, using its default Markdown prompt
+and `max_completion_tokens=8192` ([model card](https://huggingface.co/jinaai/jina-ocr-v1),
+[official contract](https://api.jina.ai/openapi.json)). Structured Markdown can contain HTML tables
+and LaTeX; the service does not rewrite or summarize recognized content.
+
+Configure `OCR_JINA_API_KEY` only on the OCR container in an ignored private `.env`.
+The base URL defaults to `https://api.jina.ai`; `OCR_JINA_TIMEOUT_SECS=120` covers the entire
+single-page cloud attempt including its one possible retry. The overall upstream HTTP timeout
+must remain greater than every model timeout. Cloud 429/500/502/503/504 are retried once;
+numeric `Retry-After` is respected up to 60 seconds, otherwise cold-start 503 waits 30 seconds
+and other transient statuses wait 2 seconds. Credentials, transport/read timeout, invalid/empty
+or truncated responses are not retried. Failures then try local GLM, Paddle and Qwen. Missing
+key returns HTTP 400 instead of silently skipping Jina. Successful pages are labeled by actual
+engine; mixed-page results use `mixed`.
+
+Health adds `jina: {configured, reachable}` and a Jina model entry. The probe only checks public
+model metadata (bounded to two seconds), not paid OCR, credentials, balance or inference
+capacity. `backend`, `backend_ready` and deprecated `ollama` retain local meanings. Overall
+`status` and updated SDK readiness report whether any model is available; old SDKs may still
+report false readiness when only Jina is reachable.
+
+Explicit Telegram Jina OCR is selected with `#jina` or `/ocr jina pages=1-10`. It disables durable
+whole-update replay even if delivering the result fails; manually resend if necessary. Other
+Telegram tasks retain their existing retry policy. Avoid automatic client replay of cloud uploads:
+an uncertain network outcome may already have incurred usage. Large PDFs can exceed 900 seconds
+under cold starts/fallbacks; increase the caller timeout or narrow the page range.
+
+Key configuration and paid smoke tests are manual opt-ins. Automated tests use isolated upstream
+fixtures. No credentials or document data are written to cloud-error logs.
 
 ## Python client
 

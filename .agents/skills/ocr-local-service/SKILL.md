@@ -1,6 +1,6 @@
 ---
 name: ocr-local-service
-description: OCR local image and PDF files through the Docker-hosted OCR HTTP service and return Markdown. Use when the user asks to recognize, transcribe, extract text or tables, or convert a scanned document to Markdown; also use to check the local OCR service or compare Paddle, GLM, and Qwen engines.
+description: OCR image and PDF files through the Docker-hosted OCR HTTP service and return Markdown. Use to extract text or tables, convert scans to Markdown, check service health, or select Paddle, GLM, Qwen, or explicitly requested Jina cloud OCR.
 ---
 
 # Local OCR Service
@@ -10,7 +10,7 @@ Use `scripts/ocr.sh` relative to this file. It depends on `curl` and `jq`; overr
 ## Workflow
 
 1. Resolve the input to a readable local file path and determine whether it is an image or PDF.
-2. Run `bash scripts/ocr.sh health` once per turn. Continue when the configured inference backend is reachable; surface the returned health details when it is degraded.
+2. Run `bash scripts/ocr.sh health` once per turn. Inspect the requested engine's availability and the independent local/cloud health; surface degraded details.
 3. Run the matching command. Use `auto` unless the user requests an engine. Add `--pages` only for a requested PDF page or inclusive range.
 4. Return the Markdown written to stdout faithfully. Summarize or transform it only when the user asks.
 
@@ -22,6 +22,17 @@ bash scripts/ocr.sh pdf /absolute/path/to/file.pdf --engine qwen --json
 ```
 
 `--json` returns the complete response with engine, page count, and duration. Set `OCR_TIMEOUT_SECS` for unusually large PDFs.
+
+## Jina cloud OCR
+
+Use `--engine jina` only when the user explicitly requests Jina and accepts uploading document pages to the hosted API. `auto` always stays local. The server owns the private `OCR_JINA_API_KEY`; clients never receive or forward it.
+
+```bash
+bash scripts/ocr.sh image /absolute/path/to/image.png --engine jina --json
+bash scripts/ocr.sh pdf /absolute/path/to/file.pdf --engine jina --pages 1-10 --json
+```
+
+The server retries transient cloud errors once within the page budget, then falls back to GLM, Paddle, and Qwen. Report the returned actual engine (or `mixed`), not the requested engine. A missing key is a configuration error. Cloud metadata reachability does not validate the key, balance, or inference capacity. After a cloud failure, surface the error rather than automatically replaying the upload; uncertain outcomes may already have incurred usage.
 
 ## Failure handling
 

@@ -229,9 +229,9 @@ func validateRecognizeOptions(options *RecognizeOptions, pdf bool) (Engine, stri
 	}
 
 	switch engine {
-	case EngineAuto, EnginePaddle, EngineGLM, EngineQwen:
+	case EngineAuto, EnginePaddle, EngineGLM, EngineQwen, EngineJina:
 	default:
-		return "", "", errors.New("engine must be one of: auto, paddle, glm, qwen")
+		return "", "", errors.New("engine must be one of: auto, paddle, glm, qwen, jina")
 	}
 	if pages == "" {
 		return engine, "", nil

@@ -143,9 +143,9 @@ components:
   schemas:
     Engine:
       type: string
-      enum: [auto, paddle, glm, qwen]
+      enum: [auto, paddle, glm, qwen, jina]
       default: auto
-      description: Requested OCR strategy. Auto lets the server choose and fall back on timeout.
+      description: Requested OCR strategy. Auto stays local. Jina explicitly uploads pages to its hosted API and falls back locally on failure.
     ImageUpload:
       type: object
       required: [file]
@@ -174,7 +174,7 @@ components:
           description: Recognized document content in Markdown.
         engine:
           type: string
-          enum: [paddle, glm, qwen, mixed]
+          enum: [paddle, glm, qwen, jina, mixed]
           description: Engine used, or mixed when PDF pages used different fallback engines.
         pages:
           type: integer
@@ -195,7 +195,7 @@ components:
           description: Configured local inference backend.
         backend_ready:
           type: boolean
-          description: Whether the configured inference backend answered the model-list request.
+          description: Whether the configured local inference backend answered the model-list request. Cloud readiness is independent.
         ollama:
           type: boolean
           deprecated: true
@@ -204,13 +204,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ModelStatus"
+        jina:
+          type: object
+          required: [configured, reachable]
+          properties:
+            configured:
+              type: boolean
+              description: A cloud API key is configured; it has not been authenticated by this probe.
+            reachable:
+              type: boolean
+              description: Cloud model metadata is reachable; not a paid inference or capacity check.
     ModelStatus:
       type: object
       required: [engine, name, available]
       properties:
         engine:
           type: string
-          enum: [paddle, glm, qwen]
+          enum: [paddle, glm, qwen, jina]
         name:
           type: string
         available:

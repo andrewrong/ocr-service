@@ -6,8 +6,9 @@ use tokio::sync::Semaphore;
 
 use crate::{
     config::Config,
-    models::{Engine, ModelStatus},
+    models::{Engine, JinaHealth, ModelStatus},
     ocr::backend::OpenAiCompatibleBackend,
+    ocr::jina::{JinaBackend, JinaNotConfigured, MODEL},
 };
 
 const OCR_PROMPT: &str = "Transcribe this document image faithfully into Markdown. Preserve headings, paragraphs, lists, tables, formulas, reading order, and line breaks where meaningful. Do not summarize, explain, or wrap the result in a code fence. Return only the transcription.";
@@ -15,6 +16,7 @@ const OCR_PROMPT: &str = "Transcribe this document image faithfully into Markdow
 #[derive(Clone)]
 pub struct OcrEngine {
     backend: OpenAiCompatibleBackend,
+    jina: JinaBackend,
     config: Arc<Config>,
     request_slots: Arc<Semaphore>,
 }
@@ -31,6 +33,7 @@ impl OcrEngine {
         let request_slots = Arc::new(Semaphore::new(config.max_concurrent_model_requests));
         Ok(Self {
             backend,
+            jina: JinaBackend::new(&config)?,
             config,
             request_slots,
         })
@@ -52,12 +55,16 @@ impl OcrEngine {
             Engine::Paddle => &self.config.paddle_model,
             Engine::Glm => &self.config.glm_model,
             Engine::Qwen => &self.config.qwen_model,
+            Engine::Jina => MODEL,
             Engine::Auto => unreachable!("auto is resolved above"),
         }
     }
 
     pub async fn ocr_image(&self, image: &[u8], engine: Engine) -> Result<OcrOutput> {
         anyhow::ensure!(!image.is_empty(), "image is empty");
+        if engine == Engine::Jina && !self.jina.configured() {
+            return Err(JinaNotConfigured.into());
+        }
 
         let image_data_url = format!(
             "data:{};base64,{}",
@@ -69,7 +76,9 @@ impl OcrEngine {
         let mut attempted_models = HashSet::new();
         let candidates = fallback_order
             .into_iter()
-            .filter(|candidate| attempted_models.insert(self.model_name(*candidate)))
+            .filter(|candidate| {
+                attempted_models.insert((*candidate == Engine::Jina, self.model_name(*candidate)))
+            })
             .collect::<Vec<_>>();
 
         for (index, candidate) in candidates.iter().copied().enumerate() {
@@ -122,6 +131,12 @@ impl OcrEngine {
         debug_assert_ne!(engine, Engine::Auto);
 
         let model = self.model_name(engine);
+        if engine == Engine::Jina {
+            return Ok(OcrOutput {
+                markdown: self.jina.transcribe(image_data_url).await?,
+                engine,
+            });
+        }
         let markdown = self
             .backend
             .transcribe(model, OCR_PROMPT, image_data_url)
@@ -148,6 +163,39 @@ impl OcrEngine {
             })
             .collect())
     }
+
+    /// Aggregate provider availability without invoking cloud inference.
+    /// Cloud reachability does not validate the key, balance, or inference capacity.
+    pub async fn health_snapshot(&self) -> (bool, Vec<ModelStatus>, JinaHealth) {
+        let (local, cloud) = tokio::join!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), self.health()),
+            tokio::time::timeout(std::time::Duration::from_secs(2), self.jina.reachable())
+        );
+        let (local_ready, mut models) = match local {
+            Ok(Ok(models)) => (true, models),
+            _ => (
+                false,
+                [Engine::Paddle, Engine::Glm, Engine::Qwen]
+                    .into_iter()
+                    .map(|engine| ModelStatus {
+                        engine,
+                        name: self.model_name(engine).to_owned(),
+                        available: false,
+                    })
+                    .collect(),
+            ),
+        };
+        let jina = JinaHealth {
+            configured: self.jina.configured(),
+            reachable: cloud.unwrap_or(false),
+        };
+        models.push(ModelStatus {
+            engine: Engine::Jina,
+            name: MODEL.to_owned(),
+            available: jina.configured && jina.reachable,
+        });
+        (local_ready, models, jina)
+    }
 }
 
 fn image_media_type(image: &[u8]) -> &'static str {
@@ -166,11 +214,12 @@ fn image_media_type(image: &[u8]) -> &'static str {
     }
 }
 
-fn fallback_order(engine: Engine) -> [Engine; 3] {
+fn fallback_order(engine: Engine) -> Vec<Engine> {
     match engine {
-        Engine::Auto | Engine::Paddle => [Engine::Paddle, Engine::Glm, Engine::Qwen],
-        Engine::Glm => [Engine::Glm, Engine::Paddle, Engine::Qwen],
-        Engine::Qwen => [Engine::Qwen, Engine::Glm, Engine::Paddle],
+        Engine::Auto | Engine::Paddle => vec![Engine::Paddle, Engine::Glm, Engine::Qwen],
+        Engine::Glm => vec![Engine::Glm, Engine::Paddle, Engine::Qwen],
+        Engine::Qwen => vec![Engine::Qwen, Engine::Glm, Engine::Paddle],
+        Engine::Jina => vec![Engine::Jina, Engine::Glm, Engine::Paddle, Engine::Qwen],
     }
 }
 

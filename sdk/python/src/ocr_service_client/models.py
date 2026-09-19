@@ -23,6 +23,14 @@ class ModelStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class JinaHealth:
+    """Cloud configuration and metadata reachability, not credential validation."""
+
+    configured: bool
+    reachable: bool
+
+
+@dataclass(frozen=True, slots=True)
 class HealthResult:
     """OCR service readiness and model availability."""
 
@@ -31,9 +39,9 @@ class HealthResult:
     models: tuple[ModelStatus, ...]
     backend: str = "ollama"
     backend_ready: bool | None = None
+    jina: JinaHealth | None = None
 
     @property
     def ready(self) -> bool:
         """Return whether at least one OCR model can accept requests."""
-        backend_ready = self.ollama if self.backend_ready is None else self.backend_ready
-        return backend_ready and any(model.available for model in self.models)
+        return self.status == "ok" and any(model.available for model in self.models)

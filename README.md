@@ -2,11 +2,13 @@
 
 Local HTTP OCR service backed by an OpenAI-compatible local model runtime. Ollama is the default;
 LM Studio and llama.cpp are also supported. Docker contains the Rust HTTP layer and Poppler while
-models stay on the macOS host for Metal acceleration.
+models stay on the macOS host for Metal acceleration. Explicit `jina` requests can optionally
+use Jina's hosted OCR API instead; local defaults do not upload document pages.
 
 ## Deploy
 
-Prerequisites: OrbStack and at least one supported local runtime with a vision model.
+Prerequisites: OrbStack and a supported local vision runtime, or a configured Jina key for explicit
+cloud requests. Local fallback requires at least one configured local vision model.
 
 | Runtime | `OCR_INFERENCE_BACKEND` | Default host port |
 |---|---|---|
@@ -70,6 +72,23 @@ The OpenAPI 3.1 contract is stored in [`openapi.yaml`](openapi.yaml) and served 
 client from [`sdk/python`](sdk/python) and use one `OcrClient.recognize()` method for images and
 PDFs. Go callers can use the dependency-free streaming client in [`sdk/go`](sdk/go). Existing
 `/ocr/*` routes remain available for compatibility.
+
+## Optional Jina cloud OCR
+
+Set `OCR_JINA_API_KEY` only in the private deployment `.env`, then rebuild the OCR container.
+`OCR_JINA_BASE_URL` defaults to `https://api.jina.ai`; the per-page `OCR_JINA_TIMEOUT_SECS`
+defaults to 120 seconds, including one retry and backoff. Explicit `engine=jina` uploads image
+pages to Jina and can incur charges; `auto` and all local engine strategies stay local.
+
+```bash
+curl --fail-with-body -F 'file=@document.pdf' -F 'engine=jina' -F 'page_range=1-10' \
+  --max-time 900 http://127.0.0.1:18100/v1/ocr/pdf
+```
+
+Transient cloud errors are retried once, then GLM, Paddle and Qwen are attempted locally.
+Read the actual returned `engine`, which can be `jina`, a local engine, or `mixed` for PDFs.
+Missing credentials return HTTP 400. See [integration guidance](docs/integration.md#jina-cloud-ocr)
+for privacy, retry, health and client examples. This is hosted inference, not a local Jina model.
 
 ## Agent Skill
 
