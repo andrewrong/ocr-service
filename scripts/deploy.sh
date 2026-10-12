@@ -89,7 +89,7 @@ sync_compose() {
   rm -f "$new"
 }
 
-# Start the service and wait for the health check. start it and wait for the health check.
+# Start the service and wait for the health check.
 start_and_wait() {
   (cd "$SERVICE_DIR" && docker compose up -d --no-build) || finish up-failed
   local deadline=$((SECONDS + TIMEOUT)) ids id status healthy
@@ -119,9 +119,14 @@ if [[ $ACTION == rollback ]]; then
   docker image inspect "$IMAGE:$target" >/dev/null 2>&1 || finish image-missing
   docker tag "$IMAGE:$target" "$IMAGE:local" || finish image-missing
   # Save the compose.yaml that is there, then bring back the one saved for the target.
+  # The saved copy is read first: when the target is the commit running now, saving the
+  # current file replaces it.
   if [[ -f $SERVICE_DIR/compose.yaml.$target ]]; then
+    restore=$(mktemp "${TMPDIR:-/tmp}/ocr-deploy-compose.XXXXXX") || finish up-failed
+    cp "$SERVICE_DIR/compose.yaml.$target" "$restore" || { rm -f "$restore"; finish up-failed; }
     save_compose
-    cp "$SERVICE_DIR/compose.yaml.$target" "$SERVICE_DIR/compose.yaml" || finish up-failed
+    cp "$restore" "$SERVICE_DIR/compose.yaml" || { rm -f "$restore"; finish up-failed; }
+    rm -f "$restore"
   fi
   start_and_wait
 fi

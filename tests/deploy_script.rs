@@ -512,3 +512,23 @@ fn a_rollback_without_a_saved_compose_file_leaves_compose_yaml_alone() {
         "current"
     );
 }
+
+#[test]
+fn rollback_of_a_redeployed_commit_restores_the_previous_compose() {
+    let sb = Sandbox::new()
+        .set("FAKE_COMMIT", OLD)
+        .set("FAKE_COMPOSE", "new compose");
+    fs::write(compose_path(&sb, ""), "old compose").unwrap();
+
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, &format!(".{OLD}"))).unwrap(),
+        "old compose"
+    );
+
+    assert_eq!(sb.run(&["--rollback"]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, "")).unwrap(),
+        "old compose"
+    );
+}
