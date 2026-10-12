@@ -28,6 +28,49 @@ pub struct OcrEngine {
     request_slots: Arc<Semaphore>,
 }
 
+/// Writes the `OCR attempt` line when dropped, so an attempt that is cancelled
+/// (another page of a PDF failed) is still logged, with outcome `error`.
+struct AttemptLog {
+    engine: Engine,
+    page: usize,
+    image_bytes: usize,
+    started: Instant,
+    outcome: &'static str,
+    chars: Option<usize>,
+}
+
+impl AttemptLog {
+    fn start(engine: Engine, page: usize, image_bytes: usize) -> Self {
+        Self {
+            engine,
+            page,
+            image_bytes,
+            started: Instant::now(),
+            outcome: "error",
+            chars: None,
+        }
+    }
+
+    fn finish(&mut self, outcome: &'static str, chars: Option<usize>) {
+        self.outcome = outcome;
+        self.chars = chars;
+    }
+}
+
+impl Drop for AttemptLog {
+    fn drop(&mut self) {
+        tracing::info!(
+            engine = %self.engine,
+            page = self.page,
+            image_bytes = self.image_bytes,
+            duration_ms = self.started.elapsed().as_millis() as u64,
+            outcome = self.outcome,
+            chars = self.chars,
+            "OCR attempt"
+        );
+    }
+}
+
 #[derive(Debug)]
 pub struct OcrOutput {
     pub markdown: String,
@@ -114,26 +157,17 @@ impl OcrEngine {
             if candidate == Engine::Jina {
                 cloud_attempted.store(true, Ordering::SeqCst);
             }
-            let started = Instant::now();
+            let mut log = AttemptLog::start(candidate, page, image.len());
             let attempt =
                 tokio::time::timeout(timeout, self.ocr_with_engine(&image_data_url, candidate))
                     .await;
-            let duration_ms = started.elapsed().as_millis() as u64;
+            match &attempt {
+                Ok(Ok(output)) => log.finish("ok", Some(output.markdown.chars().count())),
+                Ok(Err(_)) => log.finish("error", None),
+                Err(_) => log.finish("timeout", None),
+            }
+            drop(log);
             drop(permit);
-            let (outcome, chars) = match &attempt {
-                Ok(Ok(output)) => ("ok", Some(output.markdown.chars().count())),
-                Ok(Err(_)) => ("error", None),
-                Err(_) => ("timeout", None),
-            };
-            tracing::info!(
-                engine = %candidate,
-                page,
-                image_bytes = image.len(),
-                duration_ms,
-                outcome,
-                chars,
-                "OCR attempt"
-            );
 
             match attempt {
                 Ok(Ok(output)) => return Ok(output),

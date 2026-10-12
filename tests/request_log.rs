@@ -215,3 +215,101 @@ async fn no_event_holds_a_file_name_or_the_recognized_text() {
     assert!(!logged.contains("TEXT-MARKER-7c1e"), "{logged}");
     assert!(!logged.contains("NAME-MARKER-4f2a"), "{logged}");
 }
+
+fn two_page_pdf() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources <<>> /Contents 5 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 72 72] /Resources <<>> /Contents 6 0 R >>",
+        "<< /Length 0 >>\nstream\n\nendstream",
+        "<< /Length 0 >>\nstream\n\nendstream",
+    ];
+    let mut pdf = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", index + 1));
+    }
+    let xref = pdf.len();
+    pdf.push_str("xref\n0 7\n0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    pdf.push_str(&format!(
+        "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    ));
+    pdf.into_bytes()
+}
+
+#[tokio::test]
+async fn pdf_failure_logs_every_started_engine_attempt() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Barrier;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let barrier = Arc::new(Barrier::new(2));
+    let url = runtime(Router::new().route(
+        "/v1/chat/completions",
+        post({
+            let calls = calls.clone();
+            move || {
+                let calls = calls.clone();
+                let barrier = barrier.clone();
+                async move {
+                    let number = calls.fetch_add(1, Ordering::SeqCst);
+                    barrier.wait().await;
+                    if number == 0 {
+                        std::future::pending::<()>().await;
+                    }
+                    (StatusCode::BAD_REQUEST, "fixture failure")
+                }
+            }
+        }),
+    ))
+    .await;
+
+    // One distinct candidate per page, with both pages running together.
+    let app = router(Config {
+        paddle_model: "fixture-model".into(),
+        glm_model: "fixture-model".into(),
+        qwen_model: "fixture-model".into(),
+        max_concurrent_model_requests: 2,
+        max_concurrent_pages: 2,
+        pdf_dpi: 36,
+        ..config(url)
+    })
+    .unwrap();
+
+    let capture = Capture::default();
+    let _guard =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+
+    let mut data = b"--fixture\r\nContent-Disposition: form-data; \
+        name=\"file\"; filename=\"fixture.pdf\"\r\n\
+        Content-Type: application/pdf\r\n\r\n"
+        .to_vec();
+    data.extend(two_page_pdf());
+    data.extend(b"\r\n--fixture--\r\n");
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(3),
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/ocr/pdf")
+                .header("content-type", "multipart/form-data; boundary=fixture")
+                .body(Body::from(data))
+                .unwrap(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let events = capture.0.lock().unwrap().clone();
+    assert_eq!(with_message(&events, "OCR request").len(), 1);
+    assert_eq!(with_message(&events, "OCR attempt").len(), 2);
+}

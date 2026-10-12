@@ -106,7 +106,7 @@ not logged. Failures still write their `warn` lines as before.
 | `page` | page number; 1 for an image |
 | `image_bytes` | size of the page image in bytes |
 | `duration_ms` | milliseconds the attempt took, without the wait for a model slot |
-| `outcome` | `ok`, `timeout` or `error` |
+| `outcome` | `ok`, `timeout` or `error`; an attempt cancelled because another page of the same PDF failed is logged as `error` |
 | `chars` | characters of the text; only when `outcome` is `ok` |
 
 `OCR request`, when the response is ready (`/ocr/image`, `/ocr/pdf` and their `/v1` routes):
