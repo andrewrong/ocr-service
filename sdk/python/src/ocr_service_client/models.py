@@ -28,6 +28,7 @@ class JinaHealth:
 
     configured: bool
     reachable: bool
+    fallback_on_local_failure: bool
 
 
 @dataclass(frozen=True, slots=True)

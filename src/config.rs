@@ -50,6 +50,8 @@ pub struct Config {
     pub jina_api_key: Option<String>,
     pub jina_base_url: String,
     pub jina_timeout: Duration,
+    /// Last attempt with Jina for a local strategy after every local engine failed.
+    pub jina_fallback_on_local_failure: bool,
     pub inference_backend: InferenceBackend,
     pub inference_url: String,
     pub inference_api_token: Option<String>,
@@ -73,6 +75,7 @@ impl Default for Config {
             jina_api_key: None,
             jina_base_url: "https://api.jina.ai".to_owned(),
             jina_timeout: Duration::from_secs(120),
+            jina_fallback_on_local_failure: false,
             inference_backend: InferenceBackend::Ollama,
             inference_url: InferenceBackend::Ollama.default_url().to_owned(),
             inference_api_token: None,
@@ -119,6 +122,10 @@ impl Config {
                 "OCR_JINA_TIMEOUT_SECS",
                 defaults.jina_timeout.as_secs(),
             )?),
+            jina_fallback_on_local_failure: env_bool(
+                "OCR_JINA_FALLBACK_ON_LOCAL_FAILURE",
+                defaults.jina_fallback_on_local_failure,
+            )?,
             inference_backend,
             inference_url: normalize_inference_url(&inference_url),
             inference_api_token: env_optional_string("OCR_INFERENCE_API_TOKEN"),
@@ -190,6 +197,10 @@ impl Config {
             "OCR_MAX_CONCURRENT_MODEL_REQUESTS must be greater than zero"
         );
         anyhow::ensure!(
+            !config.jina_fallback_on_local_failure || config.jina_api_key.is_some(),
+            "OCR_JINA_FALLBACK_ON_LOCAL_FAILURE requires OCR_JINA_API_KEY"
+        );
+        anyhow::ensure!(
             config.jina_api_key.is_none()
                 || (!config.jina_timeout.is_zero() && !config.jina_base_url.is_empty()),
             "OCR_JINA_TIMEOUT_SECS and OCR_JINA_BASE_URL must be nonzero/nonempty"
@@ -232,6 +243,17 @@ fn env_optional_string(name: &str) -> Option<String> {
 fn normalize_inference_url(value: &str) -> String {
     let value = value.trim().trim_end_matches('/');
     value.strip_suffix("/v1").unwrap_or(value).to_owned()
+}
+
+fn env_bool(name: &str, default: bool) -> anyhow::Result<bool> {
+    match env_optional_string(name) {
+        None => Ok(default),
+        Some(value) => match value.to_ascii_lowercase().as_str() {
+            "true" | "1" => Ok(true),
+            "false" | "0" => Ok(false),
+            _ => anyhow::bail!("invalid {name}={value:?}: expected true or false"),
+        },
+    }
 }
 
 fn env_parse<T>(name: &str, default: T) -> anyhow::Result<T>

@@ -141,6 +141,7 @@ class OcrClient:
                 jina=JinaHealth(
                     configured=bool(payload["jina"]["configured"]),
                     reachable=bool(payload["jina"]["reachable"]),
+                    fallback_on_local_failure=bool(payload["jina"]["fallback_on_local_failure"]),
                 )
                 if payload.get("jina")
                 else None,
@@ -273,11 +274,16 @@ class OcrClient:
         return cast(dict[str, Any], payload)
 
     def _raise_http_error(self, response: httpx.Response) -> None:
+        cloud_attempted: bool | None = None
         try:
             payload = self._json_object(response)
             message = str(payload.get("message") or payload.get("error") or "").strip()
+            attempted = payload.get("cloud_attempted")
+            cloud_attempted = attempted if isinstance(attempted, bool) else None
         except OcrServiceError:
             message = response.text.strip()
         if not message:
             message = f"OCR service returned HTTP {response.status_code}"
-        raise OcrServiceError(message, status_code=response.status_code)
+        raise OcrServiceError(
+            message, status_code=response.status_code, cloud_attempted=cloud_attempted
+        )

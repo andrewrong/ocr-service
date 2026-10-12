@@ -43,6 +43,9 @@ type ModelStatus struct {
 type JinaHealth struct {
 	Configured bool `json:"configured"`
 	Reachable  bool `json:"reachable"`
+	// FallbackOnLocalFailure reports that a local strategy makes one last attempt with Jina
+	// after every local engine failed, so a page can leave the machine without engine=jina.
+	FallbackOnLocalFailure bool `json:"fallback_on_local_failure"`
 }
 
 // HealthResult contains local and optional cloud model availability.

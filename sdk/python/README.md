@@ -14,7 +14,9 @@ async with OcrClient("http://127.0.0.1:18100") as client:
 See `../../docs/integration.md` for the complete HTTP contract and deployment addresses.
 
 Use `recognize("scan.pdf", engine="jina", pages="1-10")` to explicitly upload pages to
-Jina through the OCR service. Configure the private key on the server only. `auto` remains local.
+Jina through the OCR service. Configure the private key on the server only. `auto` remains local unless the operator enabled the server's Jina fallback after local failure
+(`health.jina.fallback_on_local_failure`); `OcrServiceError.cloud_attempted` tells whether Jina may
+have been called.
 Inspect the actual returned engine because cloud failures can fall back locally. Health exposes
 optional `health.jina.configured`/`reachable`; `health.ready` covers any available provider.
 Cloud metadata does not validate credentials or capacity. Avoid automatic upload replay after

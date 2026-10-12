@@ -6,6 +6,9 @@ import "fmt"
 type ServiceError struct {
 	StatusCode int
 	Message    string
+	// CloudAttempted reports whether a request to Jina may have been made while serving the
+	// request. Nil when the response did not say, for example with an older server.
+	CloudAttempted *bool
 }
 
 // Error implements error.

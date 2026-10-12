@@ -16,7 +16,7 @@ func TestExplicitJinaSelectionAndCloudOnlyReadiness(t *testing.T) {
 	image := writeTestFile(t, "page.png", []byte("png"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
-			fmt.Fprint(w, `{"status":"ok","backend":"ollama","backend_ready":false,"ollama":false,"jina":{"configured":true,"reachable":true},"models":[{"engine":"jina","name":"jina-ocr-v1","available":true}]}`)
+			fmt.Fprint(w, `{"status":"ok","backend":"ollama","backend_ready":false,"ollama":false,"jina":{"configured":true,"reachable":true,"fallback_on_local_failure":true},"models":[{"engine":"jina","name":"jina-ocr-v1","available":true}]}`)
 			return
 		}
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -46,7 +46,7 @@ func TestExplicitJinaSelectionAndCloudOnlyReadiness(t *testing.T) {
 	if !health.Ready() {
 		t.Error("cloud-only service should be ready")
 	}
-	if health.Jina == nil || !health.Jina.Configured || !health.Jina.Reachable {
+	if health.Jina == nil || !health.Jina.Configured || !health.Jina.Reachable || !health.Jina.FallbackOnLocalFailure {
 		t.Error("missing Jina readiness details")
 	}
 }
@@ -175,7 +175,7 @@ func TestRecognizeReturnsTypedServiceError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusBadGateway)
-		fmt.Fprint(response, `{"error":"all OCR engines timed out"}`)
+		fmt.Fprint(response, `{"error":"all OCR engines timed out","cloud_attempted":true}`)
 	}))
 	t.Cleanup(server.Close)
 
@@ -193,6 +193,9 @@ func TestRecognizeReturnsTypedServiceError(t *testing.T) {
 	}
 	if serviceError.Message != "all OCR engines timed out" {
 		t.Errorf("message = %q", serviceError.Message)
+	}
+	if serviceError.CloudAttempted == nil || !*serviceError.CloudAttempted {
+		t.Errorf("cloud attempted = %v, want true", serviceError.CloudAttempted)
 	}
 }
 

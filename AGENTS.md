@@ -35,8 +35,9 @@ A change under `sdk/go` also passes `go vet ./... && go test ./...` there, and a
   stop it or send it a request, and do not bind that port.
 - The deployment files (`compose.yaml`, `Dockerfile`, `.env.example`, `scripts/`) and the skill
   that callers install (`.agents/`) change only when the issue asks for it.
-- Cloud use is opt-in: a request that does not name the `jina` engine never uploads a page.
-  Do not change that, or how a key is read, stored or logged, unless the issue asks for it.
+- Cloud use is opt-in: a request that does not name the `jina` engine never uploads a page,
+  except a local strategy after every local engine failed, when the operator set
+  `OCR_JINA_FALLBACK_ON_LOCAL_FAILURE=true` (default `false`). Do not change that, or how a key is read, stored or logged, unless the issue asks for it.
 
 ## The contract
 

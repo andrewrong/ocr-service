@@ -1,4 +1,11 @@
-use std::{str::FromStr, sync::Arc, time::Instant};
+use std::{
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 
 use anyhow::Context;
 use axum::{
@@ -57,11 +64,12 @@ async fn ocr_image(
 ) -> Result<Json<OcrResponse>, ApiError> {
     let started = Instant::now();
     let upload = parse_upload(multipart, false).await?;
+    let cloud_attempted = AtomicBool::new(false);
     let output = state
         .ocr
-        .ocr_image(&upload.file, upload.engine)
+        .ocr_image_traced(&upload.file, upload.engine, &cloud_attempted)
         .await
-        .map_err(ApiError::upstream)?;
+        .map_err(|error| ApiError::upstream(error, cloud_attempted.load(Ordering::SeqCst)))?;
 
     Ok(Json(OcrResponse {
         markdown: output.markdown,
@@ -83,6 +91,7 @@ async fn ocr_pdf(
     let page_count = rendered.pages.len();
     let concurrency = state.config.max_concurrent_pages;
     let requested_engine = upload.engine;
+    let cloud_attempted = Arc::new(AtomicBool::new(false));
     let page_paths = rendered
         .pages
         .iter()
@@ -91,18 +100,21 @@ async fn ocr_pdf(
 
     let results = stream::iter(page_paths.into_iter().map(|(page_number, path)| {
         let ocr = state.ocr.clone();
+        let cloud_attempted = cloud_attempted.clone();
         async move {
             let image = tokio::fs::read(&path)
                 .await
                 .with_context(|| format!("failed to read rendered page {page_number}"))?;
-            let output = ocr.ocr_image(&image, requested_engine).await?;
+            let output = ocr
+                .ocr_image_traced(&image, requested_engine, &cloud_attempted)
+                .await?;
             anyhow::Ok((page_number, output.markdown, output.engine))
         }
     }))
     .buffer_unordered(concurrency)
     .try_collect::<Vec<_>>()
     .await
-    .map_err(ApiError::upstream)?;
+    .map_err(|error| ApiError::upstream(error, cloud_attempted.load(Ordering::SeqCst)))?;
 
     let mut pages = Vec::with_capacity(page_count);
     let mut used_engines = Vec::with_capacity(page_count);
@@ -221,6 +233,7 @@ async fn parse_upload(
 struct ApiError {
     status: StatusCode,
     error: anyhow::Error,
+    cloud_attempted: bool,
 }
 
 impl ApiError {
@@ -228,10 +241,11 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             error,
+            cloud_attempted: false,
         }
     }
 
-    fn upstream(error: anyhow::Error) -> Self {
+    fn upstream(error: anyhow::Error, cloud_attempted: bool) -> Self {
         if error
             .downcast_ref::<crate::ocr::JinaNotConfigured>()
             .is_some()
@@ -241,6 +255,7 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_GATEWAY,
             error,
+            cloud_attempted,
         }
     }
 }
@@ -252,6 +267,7 @@ impl IntoResponse for ApiError {
             self.status,
             Json(ErrorResponse {
                 error: format!("{:#}", self.error),
+                cloud_attempted: self.cloud_attempted,
             }),
         )
             .into_response()
