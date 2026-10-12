@@ -67,6 +67,8 @@ pub struct Config {
     pub max_concurrent_pages: usize,
     pub max_upload_bytes: usize,
     pub pdf_dpi: u16,
+    /// `max_tokens` sent with every request to a local model.
+    pub local_max_output_tokens: u32,
 }
 
 impl Default for Config {
@@ -91,6 +93,7 @@ impl Default for Config {
             max_concurrent_pages: 4,
             max_upload_bytes: 100 * 1024 * 1024,
             pdf_dpi: 180,
+            local_max_output_tokens: 4096,
         }
     }
 }
@@ -159,6 +162,10 @@ impl Config {
             )?,
             max_upload_bytes: env_parse("OCR_MAX_UPLOAD_BYTES", defaults.max_upload_bytes)?,
             pdf_dpi: env_parse("OCR_PDF_DPI", defaults.pdf_dpi)?,
+            local_max_output_tokens: env_parse(
+                "OCR_LOCAL_MAX_OUTPUT_TOKENS",
+                defaults.local_max_output_tokens,
+            )?,
         };
         config.validate()?;
         Ok(config)
@@ -176,6 +183,10 @@ impl Config {
             "OCR_MAX_UPLOAD_BYTES must be greater than zero"
         );
         anyhow::ensure!(config.pdf_dpi > 0, "OCR_PDF_DPI must be greater than zero");
+        anyhow::ensure!(
+            config.local_max_output_tokens > 0,
+            "OCR_LOCAL_MAX_OUTPUT_TOKENS must be at least 1"
+        );
         anyhow::ensure!(
             !config.inference_url.is_empty(),
             "OCR_INFERENCE_URL must not be empty"
@@ -271,19 +282,27 @@ where
     T::Err: std::error::Error + Send + Sync + 'static,
 {
     match env::var(name) {
-        Ok(value) => value
-            .parse()
-            .map_err(|error| anyhow::anyhow!("invalid {name}={value:?}: {error}")),
+        Ok(value) => parse_value(name, &value),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(error.into()),
     }
+}
+
+fn parse_value<T>(name: &str, value: &str) -> anyhow::Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    value
+        .parse()
+        .map_err(|error| anyhow::anyhow!("invalid {name}={value:?}: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use super::{Config, InferenceBackend, normalize_inference_url, parse_bool};
+    use super::{Config, InferenceBackend, normalize_inference_url, parse_bool, parse_value};
     use crate::models::Engine;
 
     #[test]
@@ -308,6 +327,23 @@ mod tests {
         for value in ["", "  ", "yes", "on", "2", "tru"] {
             assert!(parse_bool("X", value).is_err(), "{value:?}");
         }
+    }
+
+    #[test]
+    fn local_max_output_tokens_must_be_a_positive_integer() {
+        assert_eq!(Config::default().local_max_output_tokens, 4096);
+        for value in ["abc", "", "-1", "1.5"] {
+            assert!(
+                parse_value::<u32>("OCR_LOCAL_MAX_OUTPUT_TOKENS", value).is_err(),
+                "{value:?}"
+            );
+        }
+        let zero = Config {
+            local_max_output_tokens: 0,
+            ..Config::default()
+        };
+        assert!(zero.validate().is_err());
+        assert!(Config::default().validate().is_ok());
     }
 
     #[test]
