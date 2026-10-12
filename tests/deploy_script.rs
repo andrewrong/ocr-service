@@ -23,9 +23,11 @@ case "$1" in
   compose)
     echo "compose in $PWD: $*" >>"$FAKE_LOG"
     [[ $2 == up ]] && exit "${FAKE_UP_FAIL:-0}"
-    [[ $2 == ps ]] && echo container1
+    [[ $2 == ps ]] && echo ${FAKE_CONTAINERS:-container1}
     exit 0 ;;
-  inspect) echo "${FAKE_HEALTH:-healthy}"; exit 0 ;;
+  inspect)
+    [[ ${@: -1} == "${FAKE_UNHEALTHY:-none}" ]] && { echo starting; exit 0; }
+    echo "${FAKE_HEALTH:-healthy}"; exit 0 ;;
 esac
 exit 0
 "#;
@@ -94,6 +96,8 @@ impl Sandbox {
         cmd.arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/deploy.sh"))
             .args(args)
             .env("PATH", path)
+            .env_remove("OCR_DEPLOY_SERVICE_DIR")
+            .env_remove("OCR_DEPLOY_RECORD")
             .env("OCR_DEPLOY_HEALTH_TIMEOUT", "2");
         if service {
             cmd.env("OCR_DEPLOY_SERVICE_DIR", self.dir.join("service"));
@@ -331,4 +335,76 @@ fn a_dot_env_file_is_never_printed() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!printed.contains("marker-4f9a2c"));
+}
+
+#[test]
+fn a_decimal_timeout_with_a_leading_zero_allows_a_healthy_deploy() {
+    let sb = Sandbox::new().set("OCR_DEPLOY_HEALTH_TIMEOUT", "08");
+    let out = sb.run(&[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let lines = sb.lines();
+    assert_eq!(lines.len(), 1);
+    assert!(is_record_line(&lines[0], "deploy", "ok"));
+}
+
+#[test]
+fn a_record_write_failure_cannot_report_success() {
+    let sb = Sandbox::new();
+    let record = sb.dir.join("missing/record").display().to_string();
+    let sb = sb.set("OCR_DEPLOY_RECORD", &record);
+    let out = sb.run(&[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+}
+
+#[test]
+fn a_nonnumeric_timeout_is_a_usage_error() {
+    let sb = Sandbox::new().set("OCR_DEPLOY_HEALTH_TIMEOUT", "soon");
+    assert_eq!(sb.run(&[]).status.code(), Some(2));
+    assert!(!sb.record().exists());
+    assert!(sb.calls().is_empty());
+}
+
+#[test]
+fn no_old_image_tag_is_made_when_local_does_not_exist() {
+    let sb = Sandbox::new().set("FAKE_NO_LOCAL", "1");
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+    let calls = sb.calls();
+    assert!(
+        calls
+            .iter()
+            .all(|c| c != "docker tag ocr-service:local ocr-service:0000000")
+    );
+    assert_eq!(retags_of_local(&calls), 1);
+    assert!(sb.lines()[0].contains(&format!(" 0000000 {COMMIT} ok")));
+}
+
+#[test]
+fn every_container_must_be_healthy() {
+    let sb = Sandbox::new().set("FAKE_CONTAINERS", "c1 c2");
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+
+    let sb = Sandbox::new()
+        .set("FAKE_CONTAINERS", "c1 c2")
+        .set("FAKE_UNHEALTHY", "c2");
+    assert_eq!(sb.run(&[]).status.code(), Some(1));
+    let lines = sb.lines();
+    assert!(
+        is_record_line(&lines[0], "deploy", "unhealthy"),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_failed_attempt_records_the_hex_argument_or_the_unknown_commit_as_to() {
+    let sb = Sandbox::new().set("FAKE_FETCH_FAIL", "1");
+    assert_eq!(sb.run(&["abc1234"]).status.code(), Some(1));
+    assert!(sb.lines()[0].ends_with(&format!(" {OLD} abc1234 fetch-failed")));
+
+    let sb = Sandbox::new().set("FAKE_FETCH_FAIL", "1");
+    assert_eq!(sb.run(&["Main"]).status.code(), Some(1));
+    assert!(sb.lines()[0].ends_with(&format!(" {OLD} 0000000 fetch-failed")));
+
+    let sb = Sandbox::new();
+    assert_eq!(sb.run(&["nonsense"]).status.code(), Some(1));
+    assert!(sb.lines()[0].ends_with(&format!(" {OLD} 0000000 unknown-commit")));
 }

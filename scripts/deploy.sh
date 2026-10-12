@@ -24,6 +24,7 @@ TIMEOUT=${OCR_DEPLOY_HEALTH_TIMEOUT:-180}
 
 [[ -n $SERVICE_DIR && -n $RECORD ]] || usage
 [[ $TIMEOUT =~ ^[0-9]+$ ]] || usage
+TIMEOUT=$((10#$TIMEOUT))
 
 ACTION=deploy
 ARG=
@@ -49,8 +50,11 @@ TO=$UNKNOWN
 finish() {
   local result=$1 now
   now=$(date +%Y-%m-%dT%H:%M:%S%z | sed 's/\([0-9][0-9]\)$/:\1/')
-  printf '%s %s %s %s %s\n' "$now" "$ACTION" "$FROM" "$TO" "$result" >>"$RECORD"
   echo "deploy: $ACTION $result (from $FROM to $TO)" >&2
+  if ! printf '%s %s %s %s %s\n' "$now" "$ACTION" "$FROM" "$TO" "$result" >>"$RECORD"; then
+    echo "deploy: cannot append to the record $RECORD" >&2
+    exit 1
+  fi
   [[ $result == ok ]] && exit 0
   exit 1
 }
