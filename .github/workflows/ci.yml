@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    # A hosted runner: the repository is public, and a pull request from a fork must not run
+    # on a machine of the owner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # The version is pinned so that a new lint of a later toolchain does not fail a pull
+      # request that did not touch the code it flags. Raise it in a change of its own.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the tools the skill script needs
+        run: |
+          curl --version | head -n 1
+          jq --version
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --all-targets --locked
+
+  sdk-go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdk/go/go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  sdk-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Test
+        run: uv run --locked --extra test pytest -q
