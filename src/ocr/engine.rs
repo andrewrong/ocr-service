@@ -1,4 +1,10 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -61,6 +67,17 @@ impl OcrEngine {
     }
 
     pub async fn ocr_image(&self, image: &[u8], engine: Engine) -> Result<OcrOutput> {
+        self.ocr_image_traced(image, engine, &AtomicBool::new(false))
+            .await
+    }
+
+    /// Like `ocr_image`, and sets `cloud_attempted` before any request that may reach Jina.
+    pub async fn ocr_image_traced(
+        &self,
+        image: &[u8],
+        engine: Engine,
+        cloud_attempted: &AtomicBool,
+    ) -> Result<OcrOutput> {
         anyhow::ensure!(!image.is_empty(), "image is empty");
         if engine == Engine::Jina && !self.jina.configured() {
             return Err(JinaNotConfigured.into());
@@ -71,7 +88,10 @@ impl OcrEngine {
             image_media_type(image),
             STANDARD.encode(image)
         );
-        let fallback_order = fallback_order(engine);
+        let mut fallback_order = fallback_order(engine);
+        if engine != Engine::Jina && self.config.jina_fallback_on_local_failure {
+            fallback_order.push(Engine::Jina);
+        }
         let mut failures = Vec::new();
         let mut attempted_models = HashSet::new();
         let candidates = fallback_order
@@ -88,6 +108,9 @@ impl OcrEngine {
                 .acquire()
                 .await
                 .context("OCR model request limiter closed")?;
+            if candidate == Engine::Jina {
+                cloud_attempted.store(true, Ordering::SeqCst);
+            }
             let attempt =
                 tokio::time::timeout(timeout, self.ocr_with_engine(&image_data_url, candidate))
                     .await;
@@ -188,6 +211,7 @@ impl OcrEngine {
         let jina = JinaHealth {
             configured: self.jina.configured(),
             reachable: cloud.unwrap_or(false),
+            fallback_on_local_failure: self.config.jina_fallback_on_local_failure,
         };
         models.push(ModelStatus {
             engine: Engine::Jina,

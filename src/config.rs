@@ -50,6 +50,8 @@ pub struct Config {
     pub jina_api_key: Option<String>,
     pub jina_base_url: String,
     pub jina_timeout: Duration,
+    /// Last attempt with Jina for a local strategy after every local engine failed.
+    pub jina_fallback_on_local_failure: bool,
     pub inference_backend: InferenceBackend,
     pub inference_url: String,
     pub inference_api_token: Option<String>,
@@ -73,6 +75,7 @@ impl Default for Config {
             jina_api_key: None,
             jina_base_url: "https://api.jina.ai".to_owned(),
             jina_timeout: Duration::from_secs(120),
+            jina_fallback_on_local_failure: false,
             inference_backend: InferenceBackend::Ollama,
             inference_url: InferenceBackend::Ollama.default_url().to_owned(),
             inference_api_token: None,
@@ -119,6 +122,10 @@ impl Config {
                 "OCR_JINA_TIMEOUT_SECS",
                 defaults.jina_timeout.as_secs(),
             )?),
+            jina_fallback_on_local_failure: env_bool(
+                "OCR_JINA_FALLBACK_ON_LOCAL_FAILURE",
+                defaults.jina_fallback_on_local_failure,
+            )?,
             inference_backend,
             inference_url: normalize_inference_url(&inference_url),
             inference_api_token: env_optional_string("OCR_INFERENCE_API_TOKEN"),
@@ -190,6 +197,14 @@ impl Config {
             "OCR_MAX_CONCURRENT_MODEL_REQUESTS must be greater than zero"
         );
         anyhow::ensure!(
+            !config.jina_fallback_on_local_failure
+                || config
+                    .jina_api_key
+                    .as_ref()
+                    .is_some_and(|key| !key.trim().is_empty()),
+            "OCR_JINA_FALLBACK_ON_LOCAL_FAILURE requires OCR_JINA_API_KEY"
+        );
+        anyhow::ensure!(
             config.jina_api_key.is_none()
                 || (!config.jina_timeout.is_zero() && !config.jina_base_url.is_empty()),
             "OCR_JINA_TIMEOUT_SECS and OCR_JINA_BASE_URL must be nonzero/nonempty"
@@ -234,6 +249,22 @@ fn normalize_inference_url(value: &str) -> String {
     value.strip_suffix("/v1").unwrap_or(value).to_owned()
 }
 
+fn env_bool(name: &str, default: bool) -> anyhow::Result<bool> {
+    match env::var(name) {
+        Ok(value) => parse_bool(name, &value),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn parse_bool(name: &str, value: &str) -> anyhow::Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => anyhow::bail!("invalid {name}={value:?}: expected true, 1, false, or 0"),
+    }
+}
+
 fn env_parse<T>(name: &str, default: T) -> anyhow::Result<T>
 where
     T: std::str::FromStr,
@@ -252,7 +283,7 @@ where
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use super::{Config, InferenceBackend, normalize_inference_url};
+    use super::{Config, InferenceBackend, normalize_inference_url, parse_bool};
     use crate::models::Engine;
 
     #[test]
@@ -264,6 +295,19 @@ mod tests {
         assert_eq!(config.timeout_for(Engine::Glm), Duration::from_secs(60));
         assert_eq!(config.timeout_for(Engine::Qwen), Duration::from_secs(120));
         assert_eq!(config.max_concurrent_model_requests, 1);
+    }
+
+    #[test]
+    fn boolean_settings_accept_only_true_one_false_zero() {
+        for value in ["true", "TRUE", " 1 "] {
+            assert!(parse_bool("X", value).unwrap(), "{value:?}");
+        }
+        for value in ["false", "False", "0"] {
+            assert!(!parse_bool("X", value).unwrap(), "{value:?}");
+        }
+        for value in ["", "  ", "yes", "on", "2", "tru"] {
+            assert!(parse_bool("X", value).is_err(), "{value:?}");
+        }
     }
 
     #[test]

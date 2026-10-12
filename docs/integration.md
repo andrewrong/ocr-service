@@ -94,8 +94,11 @@ Clients should allow up to 15 minutes for large PDFs.
 
 ## Jina cloud OCR
 
-Only `engine=jina` uploads document pages to the hosted API. Existing local strategies never
-fall back to cloud. PDF rendering and page-range selection stay local; selected pages are
+`engine=jina` uploads document pages to the hosted API. Local strategies (`auto`, `paddle`, `glm`,
+`qwen`) upload a page only when the operator sets `OCR_JINA_FALLBACK_ON_LOCAL_FAILURE=true`
+(default `false`): the request then tries the local engines in the usual order and, only after
+all of them failed, makes one attempt with Jina; the response names the engine that produced
+the text. The setting requires `OCR_JINA_API_KEY`; the service refuses to start without it. PDF rendering and page-range selection stay local; selected pages are
 uploaded individually. The upstream model is `jina-ocr-v1`, using its default Markdown prompt
 and `max_completion_tokens=8192` ([model card](https://huggingface.co/jinaai/jina-ocr-v1),
 [official contract](https://api.jina.ai/openapi.json)). Structured Markdown can contain HTML tables
@@ -111,11 +114,14 @@ or truncated responses are not retried. Failures then try local GLM, Paddle and 
 key returns HTTP 400 instead of silently skipping Jina. Successful pages are labeled by actual
 engine; mixed-page results use `mixed`.
 
-Health adds `jina: {configured, reachable}` and a Jina model entry. The probe only checks public
+Health adds `jina: {configured, reachable, fallback_on_local_failure}` and a Jina model entry. The probe only checks public
 model metadata (bounded to two seconds), not paid OCR, credentials, balance or inference
-capacity. `backend`, `backend_ready` and deprecated `ollama` retain local meanings. Overall
+capacity. `fallback_on_local_failure` is the setting above. `backend`, `backend_ready` and deprecated `ollama` retain local meanings. Overall
 `status` and updated SDK readiness report whether any model is available; old SDKs may still
 report false readiness when only Jina is reachable.
+
+Every error response carries the boolean `cloud_attempted`: `true` when a request to Jina may
+have been made while serving it (so do not blindly send the document again), `false` otherwise.
 
 Explicit Telegram Jina OCR is selected with `#jina` or `/ocr jina pages=1-10`. It disables durable
 whole-update replay even if delivering the result fails; manually resend if necessary. Other

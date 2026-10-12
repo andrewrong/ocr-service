@@ -145,7 +145,12 @@ components:
       type: string
       enum: [auto, paddle, glm, qwen, jina]
       default: auto
-      description: Requested OCR strategy. Auto stays local. Jina explicitly uploads pages to its hosted API and falls back locally on failure.
+      description: >-
+        Requested OCR strategy. Jina explicitly uploads pages to its hosted API and falls back
+        locally on failure. Auto, paddle, glm and qwen stay local, unless the operator set
+        OCR_JINA_FALLBACK_ON_LOCAL_FAILURE=true: then a page is uploaded to Jina as one last
+        attempt after every local engine failed, and the response names the engine that
+        produced the text.
     ImageUpload:
       type: object
       required: [file]
@@ -206,7 +211,7 @@ components:
             $ref: "#/components/schemas/ModelStatus"
         jina:
           type: object
-          required: [configured, reachable]
+          required: [configured, reachable, fallback_on_local_failure]
           properties:
             configured:
               type: boolean
@@ -214,6 +219,9 @@ components:
             reachable:
               type: boolean
               description: Cloud model metadata is reachable; not a paid inference or capacity check.
+            fallback_on_local_failure:
+              type: boolean
+              description: A local strategy makes one last attempt with Jina after every local engine failed.
     ModelStatus:
       type: object
       required: [engine, name, available]
@@ -227,10 +235,13 @@ components:
           type: boolean
     ErrorResponse:
       type: object
-      required: [error]
+      required: [error, cloud_attempted]
       properties:
         error:
           type: string
+        cloud_attempted:
+          type: boolean
+          description: A request to Jina may have been made while serving the request; do not blindly send the document again when true.
   responses:
     BadRequest:
       description: Invalid multipart upload, engine, PDF, or page range

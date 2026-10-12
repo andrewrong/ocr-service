@@ -3,7 +3,9 @@
 Local HTTP OCR service backed by an OpenAI-compatible local model runtime. Ollama is the default;
 LM Studio and llama.cpp are also supported. Docker contains the Rust HTTP layer and Poppler while
 models stay on the macOS host for Metal acceleration. Explicit `jina` requests can optionally
-use Jina's hosted OCR API instead; local defaults do not upload document pages.
+use Jina's hosted OCR API instead; local defaults do not upload document pages unless the operator
+sets `OCR_JINA_FALLBACK_ON_LOCAL_FAILURE=true`, which lets a local strategy make one last Jina
+attempt after every local engine failed.
 
 ## Deploy
 
@@ -78,7 +80,10 @@ PDFs. Go callers can use the dependency-free streaming client in [`sdk/go`](sdk/
 Set `OCR_JINA_API_KEY` only in the private deployment `.env`, then rebuild the OCR container.
 `OCR_JINA_BASE_URL` defaults to `https://api.jina.ai`; the per-page `OCR_JINA_TIMEOUT_SECS`
 defaults to 120 seconds, including one retry and backoff. Explicit `engine=jina` uploads image
-pages to Jina and can incur charges; `auto` and all local engine strategies stay local.
+pages to Jina and can incur charges; `auto` and the local strategies stay local unless
+`OCR_JINA_FALLBACK_ON_LOCAL_FAILURE=true` (default `false`, needs a key), when a page is also
+uploaded as a last attempt after every local engine failed. Error responses carry
+`cloud_attempted`, telling whether Jina may have been called.
 
 ```bash
 curl --fail-with-body -F 'file=@document.pdf' -F 'engine=jina' -F 'page_range=1-10' \

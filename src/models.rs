@@ -67,6 +67,7 @@ pub struct HealthResponse {
 pub struct JinaHealth {
     pub configured: bool,
     pub reachable: bool,
+    pub fallback_on_local_failure: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,4 +80,6 @@ pub struct ModelStatus {
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
+    /// A request to Jina may have been made while serving the request.
+    pub cloud_attempted: bool,
 }

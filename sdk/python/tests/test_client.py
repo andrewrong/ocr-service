@@ -23,7 +23,11 @@ async def test_explicit_jina_upload_and_cloud_only_readiness(tmp_path: Path) -> 
                     "backend": "ollama",
                     "backend_ready": False,
                     "ollama": False,
-                    "jina": {"configured": True, "reachable": True},
+                    "jina": {
+                        "configured": True,
+                        "reachable": True,
+                        "fallback_on_local_failure": True,
+                    },
                     "models": [{"engine": "jina", "name": "jina-ocr-v1", "available": True}],
                 },
             )
@@ -39,6 +43,7 @@ async def test_explicit_jina_upload_and_cloud_only_readiness(tmp_path: Path) -> 
     assert result.engine == "jina"
     assert health.ready
     assert health.jina is not None and health.jina.configured and health.jina.reachable
+    assert health.jina.fallback_on_local_failure
 
 
 @pytest.mark.asyncio
@@ -122,13 +127,36 @@ async def test_recognize_rejects_pages_for_an_image_before_network_call(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_health_accepts_previous_jina_response() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "ollama": False,
+                "models": [{"engine": "jina", "name": "jina-ocr-v1", "available": True}],
+                "jina": {"configured": True, "reachable": True},
+            },
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        health = await OcrClient("http://127.0.0.1", http_client=http_client).health()
+
+    assert health.ready
+    assert health.jina is not None
+    assert health.jina.configured
+    assert health.jina.reachable
+    assert not health.jina.fallback_on_local_failure
+
+
+@pytest.mark.asyncio
 async def test_server_error_becomes_typed_exception(tmp_path: Path) -> None:
     """Preserve the HTTP status and server message in a typed exception."""
     image = tmp_path / "photo.png"
     image.write_bytes(b"png")
 
     transport = httpx.MockTransport(
-        lambda request: httpx.Response(502, json={"error": "all OCR engines timed out"})
+        lambda request: httpx.Response(502, json={"error": "all OCR engines timed out", "cloud_attempted": True})
     )
     async with httpx.AsyncClient(transport=transport) as http_client:
         client = OcrClient("http://ocr.test", http_client=http_client)
@@ -137,6 +165,7 @@ async def test_server_error_becomes_typed_exception(tmp_path: Path) -> None:
 
     assert captured.value.status_code == 502
     assert captured.value.message == "all OCR engines timed out"
+    assert captured.value.cloud_attempted is True
 
 
 @pytest.mark.asyncio

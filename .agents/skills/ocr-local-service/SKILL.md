@@ -25,7 +25,7 @@ bash scripts/ocr.sh pdf /absolute/path/to/file.pdf --engine qwen --json
 
 ## Jina cloud OCR
 
-Use `--engine jina` only when the user explicitly requests Jina and accepts uploading document pages to the hosted API. `auto` always stays local. The server owns the private `OCR_JINA_API_KEY`; clients never receive or forward it.
+Use `--engine jina` only when the user explicitly requests Jina and accepts uploading document pages to the hosted API. `auto` and the other local strategies stay local, unless the operator turned on `OCR_JINA_FALLBACK_ON_LOCAL_FAILURE` on the server: then a local strategy also uploads a page to Jina as a last attempt after every local engine failed (health shows `jina.fallback_on_local_failure`). An error response with `cloud_attempted: true` means Jina may already have been called. The server owns the private `OCR_JINA_API_KEY`; clients never receive or forward it.
 
 ```bash
 bash scripts/ocr.sh image /absolute/path/to/image.png --engine jina --json

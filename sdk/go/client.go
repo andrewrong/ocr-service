@@ -389,8 +389,9 @@ func (client *Client) getWithLegacyFallback(
 
 func decodeServiceError(response *http.Response) error {
 	var payload struct {
-		Error   string `json:"error"`
-		Message string `json:"message"`
+		Error          string `json:"error"`
+		Message        string `json:"message"`
+		CloudAttempted *bool  `json:"cloud_attempted"`
 	}
 	_ = decodeJSON(response.Body, &payload)
 	message := strings.TrimSpace(payload.Message)
@@ -400,7 +401,7 @@ func decodeServiceError(response *http.Response) error {
 	if message == "" {
 		message = http.StatusText(response.StatusCode)
 	}
-	return &ServiceError{StatusCode: response.StatusCode, Message: message}
+	return &ServiceError{StatusCode: response.StatusCode, Message: message, CloudAttempted: payload.CloudAttempted}
 }
 
 func decodeJSON(reader io.Reader, destination any) error {
