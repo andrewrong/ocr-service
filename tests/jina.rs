@@ -590,3 +590,63 @@ async fn skill_can_explicitly_upload_to_jina_through_http() {
     );
     task.abort();
 }
+
+fn files_in(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir).unwrap().count()
+}
+
+async fn run_skill_with_tmpdir(url: String, tmpdir: &std::path::Path) -> std::process::Output {
+    let fixture = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(fixture.path(), b"image").unwrap();
+    tokio::process::Command::new("bash")
+        .arg(".agents/skills/ocr-local-service/scripts/ocr.sh")
+        .arg("image")
+        .arg(fixture.path())
+        .args(["--engine", "jina"])
+        .env("OCR_SERVICE_URL", url)
+        .env("TMPDIR", tmpdir)
+        .output()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn skill_keeps_its_response_file_under_tmpdir_and_removes_it_on_success() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let seen = Arc::new(AtomicUsize::new(0));
+    let (handler_seen, handler_dir) = (seen.clone(), tmpdir.path().to_path_buf());
+    let (url, task) = server(Router::new().route(
+        "/v1/ocr/image",
+        post(move || {
+            let (seen, dir) = (handler_seen.clone(), handler_dir.clone());
+            async move {
+                seen.store(files_in(&dir), Ordering::SeqCst);
+                Json(json!({"markdown":"ok", "engine":"jina", "pages":1, "duration_ms":1}))
+            }
+        }),
+    ))
+    .await;
+    let output = run_skill_with_tmpdir(url, tmpdir.path()).await;
+    task.abort();
+    assert!(output.status.success());
+    assert_eq!(
+        seen.load(Ordering::SeqCst),
+        1,
+        "response file not in TMPDIR"
+    );
+    assert_eq!(files_in(tmpdir.path()), 0, "response file left behind");
+}
+
+#[tokio::test]
+async fn skill_removes_its_response_file_on_failure() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let (url, task) = server(Router::new().route(
+        "/v1/ocr/image",
+        post(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+    ))
+    .await;
+    let output = run_skill_with_tmpdir(url, tmpdir.path()).await;
+    task.abort();
+    assert!(!output.status.success());
+    assert_eq!(files_in(tmpdir.path()), 0, "response file left behind");
+}

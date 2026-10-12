@@ -75,7 +75,7 @@ if [[ "$operation" != "pdf" && -n "$page_range" ]]; then
   exit 2
 fi
 
-response_file="$(mktemp -t ocr-service-response.XXXXXX)"
+response_file="$(mktemp "${TMPDIR:-/tmp}/ocr-service-response.XXXXXX")"
 trap 'rm -f "$response_file"' EXIT
 
 curl_common=(
