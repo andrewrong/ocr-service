@@ -92,6 +92,16 @@ For a PDF, `engine` is `mixed` when different pages complete with different fall
 Invalid input returns HTTP 400, oversized requests return 413, and OCR/model failures return 502.
 Clients should allow up to 15 minutes for large PDFs.
 
+## Local output limit
+
+`OCR_LOCAL_MAX_OUTPUT_TOKENS` (integer, default `4096`, at least 1) is sent as `max_tokens` with
+every request to a local model; it does not apply to Jina. When a model stops at that limit
+(`finish_reason` `length`) and the end of its output is one block of lines written at least three
+times in a row, the repetition is cut after the first copy and the attempt succeeds; a warning
+with the engine and the number of removed characters is logged. Any other output that reached
+the limit fails as a truncated transcription and the next engine is tried. Output that stopped
+by itself is never changed, however often it repeats a line.
+
 ## Jina cloud OCR
 
 `engine=jina` uploads document pages to the hosted API. Local strategies (`auto`, `paddle`, `glm`,

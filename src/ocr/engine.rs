@@ -160,12 +160,18 @@ impl OcrEngine {
                 engine,
             });
         }
-        let markdown = self
+        let transcription = self
             .backend
             .transcribe(model, OCR_PROMPT, image_data_url)
             .await?;
+        if let Some(removed) = transcription.repetition_removed {
+            tracing::warn!(engine = %engine, removed_chars = removed, "cut a repetition from the model output");
+        }
 
-        Ok(OcrOutput { markdown, engine })
+        Ok(OcrOutput {
+            markdown: transcription.markdown,
+            engine,
+        })
     }
 
     pub async fn health(&self) -> Result<Vec<ModelStatus>> {
@@ -466,6 +472,123 @@ mod tests {
 
         assert_eq!(output.engine, Engine::Glm);
         assert_eq!(output.markdown, "glm-test output");
+        server.abort();
+    }
+
+    /// A runtime fixture that records each request body and answers from a script of
+    /// `(finish_reason, text)` pairs, one per request, repeating the last.
+    async fn scripted_runtime(
+        script: Vec<(&'static str, String)>,
+    ) -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>) {
+        type Shared = (Arc<Mutex<Vec<Value>>>, Arc<Vec<(&'static str, String)>>);
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(
+                    |State((bodies, script)): State<Shared>, Json(body): Json<Value>| async move {
+                        let mut bodies = bodies.lock().expect("bodies lock poisoned");
+                        let (reason, text) = &script[bodies.len().min(script.len() - 1)];
+                        bodies.push(body);
+                        Json(json!({"choices": [{
+                            "message": {"content": text}, "finish_reason": reason
+                        }]}))
+                    },
+                ),
+            )
+            .with_state((bodies.clone(), Arc::new(script)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("server runs");
+        });
+        (url, bodies, task)
+    }
+
+    fn scripted_config(url: String) -> Config {
+        Config {
+            inference_url: url,
+            paddle_model: "paddle-test".to_owned(),
+            glm_model: "glm-test".to_owned(),
+            qwen_model: "qwen-test".to_owned(),
+            ..Config::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn local_requests_carry_the_configured_max_tokens() {
+        let (url, bodies, server) = scripted_runtime(vec![("stop", "text".to_owned())]).await;
+        assert_eq!(Config::default().local_max_output_tokens, 4096);
+
+        let engine = OcrEngine::new(Arc::new(scripted_config(url.clone()))).unwrap();
+        engine.ocr_image(b"image", Engine::Glm).await.unwrap();
+        let config = Config {
+            local_max_output_tokens: 77,
+            ..scripted_config(url)
+        };
+        let engine = OcrEngine::new(Arc::new(config)).unwrap();
+        engine.ocr_image(b"image", Engine::Glm).await.unwrap();
+
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies[0]["max_tokens"], 4096);
+        assert_eq!(bodies[1]["max_tokens"], 77);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn repetition_at_the_limit_is_cut_to_its_first_copy() {
+        let looped = format!(
+            "alpha\nbeta\ngamma\n{}alpha\nbe",
+            "alpha\nbeta\ngamma\n".repeat(40)
+        );
+        let (url, bodies, server) = scripted_runtime(vec![("length", looped)]).await;
+
+        let output = OcrEngine::new(Arc::new(scripted_config(url)))
+            .unwrap()
+            .ocr_image(b"image", Engine::Glm)
+            .await
+            .expect("cut repetition succeeds");
+
+        assert_eq!(output.engine, Engine::Glm);
+        assert_eq!(output.markdown, "alpha\nbeta\ngamma");
+        assert_eq!(bodies.lock().unwrap().len(), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn truncation_without_repetition_falls_back() {
+        let (url, bodies, server) = scripted_runtime(vec![
+            ("length", "one\ntwo\nthree\nfour".to_owned()),
+            ("stop", "second engine".to_owned()),
+        ])
+        .await;
+
+        let output = OcrEngine::new(Arc::new(scripted_config(url)))
+            .unwrap()
+            .ocr_image(b"image", Engine::Glm)
+            .await
+            .expect("next engine answers");
+
+        assert_eq!(output.engine, Engine::Paddle);
+        assert_eq!(output.markdown, "second engine");
+        assert_eq!(bodies.lock().unwrap().len(), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn repetition_below_the_limit_is_returned_unchanged() {
+        let text = "same line\n".repeat(20).trim().to_owned();
+        let (url, _bodies, server) = scripted_runtime(vec![("stop", text.clone())]).await;
+
+        let output = OcrEngine::new(Arc::new(scripted_config(url)))
+            .unwrap()
+            .ocr_image(b"image", Engine::Glm)
+            .await
+            .unwrap();
+
+        assert_eq!(output.markdown, text);
         server.abort();
     }
 
