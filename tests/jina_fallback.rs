@@ -206,8 +206,12 @@ async fn health_reports_the_fallback_setting() {
             get(|| async { Json(json!({"object":"list","data":[]})) }),
         ))
         .await;
-        let app =
-            ocr_service::http::router(config("http://127.0.0.1:1".into(), local, enabled)).unwrap();
+        let (cloud, cloud_task) = server(Router::new().route(
+            "/v1/models/jina-ocr-v1",
+            get(|| async { Json(json!({"id": "jina-ocr-v1"})) }),
+        ))
+        .await;
+        let app = ocr_service::http::router(config(cloud, local, enabled)).unwrap();
         let response = app
             .oneshot(
                 Request::builder()
@@ -220,6 +224,27 @@ async fn health_reports_the_fallback_setting() {
         let body = to_bytes(response.into_body(), 65536).await.unwrap();
         let health: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(health["jina"]["fallback_on_local_failure"], enabled);
+        cloud_task.abort();
         local_task.abort();
     }
+}
+
+#[tokio::test]
+async fn extractor_rejection_reports_cloud_not_attempted() {
+    let app = ocr_service::http::router(Config::default()).unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/ocr/image")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = to_bytes(response.into_body(), 65536).await.unwrap();
+    let payload: Value = serde_json::from_slice(&bytes).expect("error must follow JSON contract");
+    assert_eq!(payload["cloud_attempted"], false);
 }

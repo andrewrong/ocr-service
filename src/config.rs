@@ -246,13 +246,18 @@ fn normalize_inference_url(value: &str) -> String {
 }
 
 fn env_bool(name: &str, default: bool) -> anyhow::Result<bool> {
-    match env_optional_string(name) {
-        None => Ok(default),
-        Some(value) => match value.to_ascii_lowercase().as_str() {
-            "true" | "1" => Ok(true),
-            "false" | "0" => Ok(false),
-            _ => anyhow::bail!("invalid {name}={value:?}: expected true or false"),
-        },
+    match env::var(name) {
+        Ok(value) => parse_bool(name, &value),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn parse_bool(name: &str, value: &str) -> anyhow::Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => anyhow::bail!("invalid {name}={value:?}: expected true, 1, false, or 0"),
     }
 }
 
@@ -274,7 +279,7 @@ where
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use super::{Config, InferenceBackend, normalize_inference_url};
+    use super::{Config, InferenceBackend, normalize_inference_url, parse_bool};
     use crate::models::Engine;
 
     #[test]
@@ -286,6 +291,19 @@ mod tests {
         assert_eq!(config.timeout_for(Engine::Glm), Duration::from_secs(60));
         assert_eq!(config.timeout_for(Engine::Qwen), Duration::from_secs(120));
         assert_eq!(config.max_concurrent_model_requests, 1);
+    }
+
+    #[test]
+    fn boolean_settings_accept_only_true_one_false_zero() {
+        for value in ["true", "TRUE", " 1 "] {
+            assert!(parse_bool("X", value).unwrap(), "{value:?}");
+        }
+        for value in ["false", "False", "0"] {
+            assert!(!parse_bool("X", value).unwrap(), "{value:?}");
+        }
+        for value in ["", "  ", "yes", "on", "2", "tru"] {
+            assert!(parse_bool("X", value).is_err(), "{value:?}");
+        }
     }
 
     #[test]

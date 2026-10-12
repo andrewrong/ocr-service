@@ -141,7 +141,9 @@ class OcrClient:
                 jina=JinaHealth(
                     configured=bool(payload["jina"]["configured"]),
                     reachable=bool(payload["jina"]["reachable"]),
-                    fallback_on_local_failure=bool(payload["jina"]["fallback_on_local_failure"]),
+                    fallback_on_local_failure=bool(
+                        payload["jina"].get("fallback_on_local_failure", False)
+                    ),
                 )
                 if payload.get("jina")
                 else None,

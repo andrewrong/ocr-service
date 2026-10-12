@@ -63,7 +63,8 @@ HTTP failures are returned as `*ocrclient.ServiceError`.
 fallback to Jina after local failure and whether Jina may have been called.
 
 Choose `EngineJina` to explicitly upload pages to Jina via the OCR server; the private key is
-configured on the server, not the SDK. `EngineAuto` stays local. Read the actual result engine
+configured on the server, not the SDK. `EngineAuto` stays local unless the operator enabled the server's Jina fallback after every
+local engine failed (`JinaHealth.FallbackOnLocalFailure`). Read the actual result engine
 because cloud failures can recover locally. `HealthResult.Jina` exposes optional configuration
 and metadata reachability; `Ready()` includes cloud-only availability without claiming the key
 or inference capacity is validated. Avoid automatic cloud upload replay after uncertain errors.

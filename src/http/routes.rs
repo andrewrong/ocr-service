@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, State},
+    extract::{DefaultBodyLimit, Multipart, State, multipart::MultipartRejection},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -60,10 +60,10 @@ async fn openapi_contract() -> impl IntoResponse {
 
 async fn ocr_image(
     State(state): State<AppState>,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<OcrResponse>, ApiError> {
     let started = Instant::now();
-    let upload = parse_upload(multipart, false).await?;
+    let upload = parse_upload(multipart.map_err(ApiError::rejection)?, false).await?;
     let cloud_attempted = AtomicBool::new(false);
     let output = state
         .ocr
@@ -81,10 +81,10 @@ async fn ocr_image(
 
 async fn ocr_pdf(
     State(state): State<AppState>,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<OcrResponse>, ApiError> {
     let started = Instant::now();
-    let upload = parse_upload(multipart, true).await?;
+    let upload = parse_upload(multipart.map_err(ApiError::rejection)?, true).await?;
     let rendered = PdfPages::render(&upload.file, upload.page_range, state.config.pdf_dpi)
         .await
         .map_err(ApiError::bad_request)?;
@@ -241,6 +241,14 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             error,
+            cloud_attempted: false,
+        }
+    }
+
+    fn rejection(rejection: MultipartRejection) -> Self {
+        Self {
+            status: rejection.status(),
+            error: anyhow::anyhow!(rejection.body_text()),
             cloud_attempted: false,
         }
     }
