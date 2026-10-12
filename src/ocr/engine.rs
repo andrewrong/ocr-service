@@ -4,6 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
 use anyhow::{Context, Result};
@@ -25,6 +26,49 @@ pub struct OcrEngine {
     jina: JinaBackend,
     config: Arc<Config>,
     request_slots: Arc<Semaphore>,
+}
+
+/// Writes the `OCR attempt` line when dropped, so an attempt that is cancelled
+/// (another page of a PDF failed) is still logged, with outcome `error`.
+struct AttemptLog {
+    engine: Engine,
+    page: usize,
+    image_bytes: usize,
+    started: Instant,
+    outcome: &'static str,
+    chars: Option<usize>,
+}
+
+impl AttemptLog {
+    fn start(engine: Engine, page: usize, image_bytes: usize) -> Self {
+        Self {
+            engine,
+            page,
+            image_bytes,
+            started: Instant::now(),
+            outcome: "error",
+            chars: None,
+        }
+    }
+
+    fn finish(&mut self, outcome: &'static str, chars: Option<usize>) {
+        self.outcome = outcome;
+        self.chars = chars;
+    }
+}
+
+impl Drop for AttemptLog {
+    fn drop(&mut self) {
+        tracing::info!(
+            engine = %self.engine,
+            page = self.page,
+            image_bytes = self.image_bytes,
+            duration_ms = self.started.elapsed().as_millis() as u64,
+            outcome = self.outcome,
+            chars = self.chars,
+            "OCR attempt"
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -67,15 +111,17 @@ impl OcrEngine {
     }
 
     pub async fn ocr_image(&self, image: &[u8], engine: Engine) -> Result<OcrOutput> {
-        self.ocr_image_traced(image, engine, &AtomicBool::new(false))
+        self.ocr_image_traced(image, engine, 1, &AtomicBool::new(false))
             .await
     }
 
     /// Like `ocr_image`, and sets `cloud_attempted` before any request that may reach Jina.
+    /// `page` only labels the attempt log lines.
     pub async fn ocr_image_traced(
         &self,
         image: &[u8],
         engine: Engine,
+        page: usize,
         cloud_attempted: &AtomicBool,
     ) -> Result<OcrOutput> {
         anyhow::ensure!(!image.is_empty(), "image is empty");
@@ -111,9 +157,16 @@ impl OcrEngine {
             if candidate == Engine::Jina {
                 cloud_attempted.store(true, Ordering::SeqCst);
             }
+            let mut log = AttemptLog::start(candidate, page, image.len());
             let attempt =
                 tokio::time::timeout(timeout, self.ocr_with_engine(&image_data_url, candidate))
                     .await;
+            match &attempt {
+                Ok(Ok(output)) => log.finish("ok", Some(output.markdown.chars().count())),
+                Ok(Err(_)) => log.finish("error", None),
+                Err(_) => log.finish("timeout", None),
+            }
+            drop(log);
             drop(permit);
 
             match attempt {
