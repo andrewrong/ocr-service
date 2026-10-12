@@ -136,7 +136,7 @@ fn cut_repetition(text: &str) -> Option<(String, usize)> {
     let lines: Vec<&str> = text.lines().collect();
     let n = lines.len();
     let mut best: Option<(usize, usize)> = None; // (lines kept, block length)
-    for k in 1..=n / 3 {
+    for k in 1..=n.saturating_sub(1) / 2 {
         // The last line may be a prefix of the line one block earlier.
         let matches = |i: usize| {
             if i + k == n - 1 {

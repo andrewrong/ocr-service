@@ -558,6 +558,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn incomplete_third_copy_is_cut_without_fallback() {
+        let (url, bodies, server) = scripted_runtime(vec![
+            (
+                "length",
+                "alpha\nbeta\ngamma\nalpha\nbeta\ngamma\nalpha\nbe".to_owned(),
+            ),
+            ("stop", "fallback output".to_owned()),
+        ])
+        .await;
+
+        let output = OcrEngine::new(Arc::new(scripted_config(url)))
+            .unwrap()
+            .ocr_image(b"image", Engine::Glm)
+            .await
+            .unwrap();
+
+        let requests = bodies.lock().unwrap().len();
+        server.abort();
+
+        assert_eq!(output.engine, Engine::Glm);
+        assert_eq!(output.markdown, "alpha\nbeta\ngamma");
+        assert_eq!(requests, 1);
+    }
+
+    #[tokio::test]
     async fn truncation_without_repetition_falls_back() {
         let (url, bodies, server) = scripted_runtime(vec![
             ("length", "one\ntwo\nthree\nfour".to_owned()),
