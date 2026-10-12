@@ -14,6 +14,8 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
 ```
 
+The tests need `pdftoppm` (poppler), `curl` and `jq` on `PATH`.
+
 A change under `sdk/go` also passes `go vet ./... && go test ./...` there, and a change under
 `sdk/python` passes `uv run --locked --extra test pytest` there. The workflow in
 `.github/workflows/ci.yml` runs the same commands on every pull request.

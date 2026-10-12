@@ -27,8 +27,12 @@ jobs:
           toolchain: "1.98.1"
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Check the tools the skill script needs
+      - name: Install poppler
+        # One test renders a PDF through pdftoppm, as the service does.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+      - name: Check the tools the tests need
         run: |
+          pdftoppm -v 2>&1 | head -n 1
           curl --version | head -n 1
           jq --version
       - name: Check formatting
