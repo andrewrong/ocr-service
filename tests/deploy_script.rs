@@ -22,6 +22,7 @@ case "$1" in
   tag) exit 0 ;;
   compose)
     echo "compose in $PWD: $*" >>"$FAKE_LOG"
+    [[ $2 == up ]] && echo "compose.yaml at up: $(cat compose.yaml 2>/dev/null)" >>"$FAKE_LOG"
     [[ $2 == up ]] && exit "${FAKE_UP_FAIL:-0}"
     [[ $2 == ps ]] && echo ${FAKE_CONTAINERS:-container1}
     exit 0 ;;
@@ -37,6 +38,7 @@ case "$3" in
   fetch) exit "${FAKE_FETCH_FAIL:-0}" ;;
   rev-parse) [[ ${@: -1} == nonsense* ]] && exit 1; echo "$FAKE_COMMIT"; exit 0 ;;
   archive) echo tar; exit 0 ;;
+  show) printf '%s' "${FAKE_COMPOSE:-new compose}"; exit 0 ;;
 esac
 exit 1
 "#;
@@ -297,6 +299,17 @@ fn a_rollback_without_a_target_or_without_its_image_fails() {
     ));
     assert_eq!(retags_of_local(&sb.calls()), 0);
 
+    let sb = Sandbox::new();
+    fs::write(sb.record(), "").unwrap();
+    assert_eq!(sb.run(&["--rollback"]).status.code(), Some(1));
+    let lines = sb.lines();
+    assert_eq!(lines.len(), 1);
+    assert!(
+        is_record_line(&lines[0], "rollback", "no-rollback-target"),
+        "{lines:?}"
+    );
+    assert_eq!(retags_of_local(&sb.calls()), 0);
+
     let sb = Sandbox::new().set("FAKE_MISSING", &format!("ocr-service:{OLD}"));
     fs::write(
         sb.record(),
@@ -407,4 +420,95 @@ fn a_failed_attempt_records_the_hex_argument_or_the_unknown_commit_as_to() {
     let sb = Sandbox::new();
     assert_eq!(sb.run(&["nonsense"]).status.code(), Some(1));
     assert!(sb.lines()[0].ends_with(&format!(" {OLD} 0000000 unknown-commit")));
+}
+
+fn compose_path(sb: &Sandbox, suffix: &str) -> PathBuf {
+    sb.dir.join("service").join(format!("compose.yaml{suffix}"))
+}
+
+#[test]
+fn a_differing_compose_file_is_saved_and_replaced_before_compose_up() {
+    let sb = Sandbox::new().set("FAKE_COMPOSE", "new compose");
+    fs::write(compose_path(&sb, ""), "old compose").unwrap();
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, "")).unwrap(),
+        "new compose"
+    );
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, &format!(".{OLD}"))).unwrap(),
+        "old compose"
+    );
+    // The fake docker records the compose file it saw at `compose up`.
+    let calls = sb.calls();
+    assert!(
+        calls.contains(&"compose.yaml at up: new compose".to_string()),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_missing_compose_file_is_written_without_a_saved_copy() {
+    let sb = Sandbox::new();
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, "")).unwrap(),
+        "new compose"
+    );
+    assert!(!compose_path(&sb, &format!(".{OLD}")).exists());
+}
+
+#[test]
+fn an_identical_compose_file_leaves_no_saved_copy() {
+    let sb = Sandbox::new().set("FAKE_COMPOSE", "same");
+    fs::write(compose_path(&sb, ""), "same").unwrap();
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+    assert_eq!(fs::read_to_string(compose_path(&sb, "")).unwrap(), "same");
+    assert!(!compose_path(&sb, &format!(".{OLD}")).exists());
+}
+
+#[test]
+fn a_failed_build_leaves_the_compose_file_alone() {
+    let sb = Sandbox::new().set("FAKE_BUILD_FAIL", "1");
+    fs::write(compose_path(&sb, ""), "old compose").unwrap();
+    assert_eq!(sb.run(&[]).status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, "")).unwrap(),
+        "old compose"
+    );
+    assert!(!compose_path(&sb, &format!(".{OLD}")).exists());
+}
+
+#[test]
+fn a_rollback_after_a_compose_change_restores_the_old_compose_file() {
+    let mut sb = Sandbox::new().set("FAKE_COMPOSE", "new compose");
+    fs::write(compose_path(&sb, ""), "old compose").unwrap();
+    assert_eq!(sb.run(&[]).status.code(), Some(0));
+    // The new image is now the one running.
+    sb.env.push(("FAKE_LABEL".into(), COMMIT.into()));
+    assert_eq!(sb.run(&["--rollback"]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, "")).unwrap(),
+        "old compose"
+    );
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, &format!(".{COMMIT}"))).unwrap(),
+        "new compose"
+    );
+}
+
+#[test]
+fn a_rollback_without_a_saved_compose_file_leaves_compose_yaml_alone() {
+    let sb = Sandbox::new().set("FAKE_LABEL", COMMIT);
+    fs::write(compose_path(&sb, ""), "current").unwrap();
+    fs::write(
+        sb.record(),
+        format!("2026-10-12T19:30:00+08:00 deploy {OLD} {COMMIT} ok\n"),
+    )
+    .unwrap();
+    assert_eq!(sb.run(&["--rollback"]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(compose_path(&sb, "")).unwrap(),
+        "current"
+    );
 }

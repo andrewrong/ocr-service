@@ -81,6 +81,14 @@ in the service directory and waits for the container to be `healthy`. A rollback
 then starts and waits the same way; nothing is built. The script never rolls back by itself and
 removes no image.
 
+The script also keeps the `compose.yaml` of the service directory at the one of the deployed
+commit. After the build succeeded, when the two differ or there is none, the file there is saved
+beside it as `compose.yaml.<commit running before>` (replacing an older copy of that name) and the
+`compose.yaml` of the commit is written in its place; when they are equal nothing is written. A
+rollback copies `compose.yaml.<target>` over `compose.yaml` when that file exists, after saving the
+current one as `compose.yaml.<commit running before>`. In the service directory the script writes
+only `compose.yaml` and these copies; it never reads, writes, moves or removes a `.env` file.
+
 Each attempt past the usage check appends one line of five fields separated by a space:
 
 ```

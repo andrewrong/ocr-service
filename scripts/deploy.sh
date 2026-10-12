@@ -67,7 +67,29 @@ if docker image inspect "$IMAGE:local" >/dev/null 2>&1; then
   [[ $label =~ $HEX ]] && FROM=$label
 fi
 
-# Point ocr-service:local at an image, start it and wait for the health check.
+# Save the compose.yaml of the service directory beside it as compose.yaml.<commit running now>.
+save_compose() {
+  if [[ -f $SERVICE_DIR/compose.yaml ]]; then
+    cp "$SERVICE_DIR/compose.yaml" "$SERVICE_DIR/compose.yaml.$FROM" || finish up-failed
+  fi
+}
+
+# Bring compose.yaml of the service directory to the one of the commit. Only after the build.
+sync_compose() {
+  local new
+  new=$(mktemp "${TMPDIR:-/tmp}/ocr-deploy-compose.XXXXXX") || finish up-failed
+  if ! git -C "$ROOT" show "$commit:compose.yaml" >"$new"; then
+    rm -f "$new"
+    finish up-failed
+  fi
+  if ! cmp -s "$new" "$SERVICE_DIR/compose.yaml"; then
+    save_compose
+    cp "$new" "$SERVICE_DIR/compose.yaml" || { rm -f "$new"; finish up-failed; }
+  fi
+  rm -f "$new"
+}
+
+# Start the service and wait for the health check. start it and wait for the health check.
 start_and_wait() {
   (cd "$SERVICE_DIR" && docker compose up -d --no-build) || finish up-failed
   local deadline=$((SECONDS + TIMEOUT)) ids id status healthy
@@ -96,6 +118,11 @@ if [[ $ACTION == rollback ]]; then
   TO=$target
   docker image inspect "$IMAGE:$target" >/dev/null 2>&1 || finish image-missing
   docker tag "$IMAGE:$target" "$IMAGE:local" || finish image-missing
+  # Save the compose.yaml that is there, then bring back the one saved for the target.
+  if [[ -f $SERVICE_DIR/compose.yaml.$target ]]; then
+    save_compose
+    cp "$SERVICE_DIR/compose.yaml.$target" "$SERVICE_DIR/compose.yaml" || finish up-failed
+  fi
   start_and_wait
 fi
 
@@ -115,4 +142,5 @@ git -C "$ROOT" archive "$commit" |
   docker build --label "org.opencontainers.image.revision=$commit" -t "$IMAGE:$commit" - ||
   finish build-failed
 docker tag "$IMAGE:$commit" "$IMAGE:local" || finish build-failed
+sync_compose
 start_and_wait
