@@ -4,6 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Instant,
 };
 
 use anyhow::{Context, Result};
@@ -67,15 +68,17 @@ impl OcrEngine {
     }
 
     pub async fn ocr_image(&self, image: &[u8], engine: Engine) -> Result<OcrOutput> {
-        self.ocr_image_traced(image, engine, &AtomicBool::new(false))
+        self.ocr_image_traced(image, engine, 1, &AtomicBool::new(false))
             .await
     }
 
     /// Like `ocr_image`, and sets `cloud_attempted` before any request that may reach Jina.
+    /// `page` only labels the attempt log lines.
     pub async fn ocr_image_traced(
         &self,
         image: &[u8],
         engine: Engine,
+        page: usize,
         cloud_attempted: &AtomicBool,
     ) -> Result<OcrOutput> {
         anyhow::ensure!(!image.is_empty(), "image is empty");
@@ -111,10 +114,26 @@ impl OcrEngine {
             if candidate == Engine::Jina {
                 cloud_attempted.store(true, Ordering::SeqCst);
             }
+            let started = Instant::now();
             let attempt =
                 tokio::time::timeout(timeout, self.ocr_with_engine(&image_data_url, candidate))
                     .await;
+            let duration_ms = started.elapsed().as_millis() as u64;
             drop(permit);
+            let (outcome, chars) = match &attempt {
+                Ok(Ok(output)) => ("ok", Some(output.markdown.chars().count())),
+                Ok(Err(_)) => ("error", None),
+                Err(_) => ("timeout", None),
+            };
+            tracing::info!(
+                engine = %candidate,
+                page,
+                image_bytes = image.len(),
+                duration_ms,
+                outcome,
+                chars,
+                "OCR attempt"
+            );
 
             match attempt {
                 Ok(Ok(output)) => return Ok(output),

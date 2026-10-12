@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, State, multipart::MultipartRejection},
+    extract::{DefaultBodyLimit, MatchedPath, Multipart, State, multipart::MultipartRejection},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -58,16 +58,64 @@ async fn openapi_contract() -> impl IntoResponse {
     )
 }
 
+/// What the request line reports; the handlers fill it as far as they get.
+#[derive(Default)]
+struct RequestLog {
+    requested_engine: Option<Engine>,
+    upload_bytes: Option<usize>,
+    pages: Option<usize>,
+}
+
+fn log_request(
+    route: &MatchedPath,
+    started: Instant,
+    log: &RequestLog,
+    result: &Result<Json<OcrResponse>, ApiError>,
+) {
+    let (status, engine) = match result {
+        Ok(Json(response)) => (StatusCode::OK, Some(response.engine.as_str())),
+        Err(error) => (error.status, None),
+    };
+    tracing::info!(
+        route = route.as_str(),
+        requested_engine = log.requested_engine.map(|engine| engine.to_string()),
+        upload_bytes = log.upload_bytes,
+        pages = log.pages,
+        engine,
+        status = status.as_u16(),
+        duration_ms = started.elapsed().as_millis() as u64,
+        "OCR request"
+    );
+}
+
 async fn ocr_image(
+    route: MatchedPath,
     State(state): State<AppState>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<OcrResponse>, ApiError> {
     let started = Instant::now();
+    let mut log = RequestLog {
+        pages: Some(1),
+        ..RequestLog::default()
+    };
+    let result = image_response(&state, multipart, &mut log).await;
+    log_request(&route, started, &log, &result);
+    result
+}
+
+async fn image_response(
+    state: &AppState,
+    multipart: Result<Multipart, MultipartRejection>,
+    log: &mut RequestLog,
+) -> Result<Json<OcrResponse>, ApiError> {
+    let started = Instant::now();
     let upload = parse_upload(multipart.map_err(ApiError::rejection)?, false).await?;
+    log.requested_engine = Some(upload.engine);
+    log.upload_bytes = Some(upload.file.len());
     let cloud_attempted = AtomicBool::new(false);
     let output = state
         .ocr
-        .ocr_image_traced(&upload.file, upload.engine, &cloud_attempted)
+        .ocr_image_traced(&upload.file, upload.engine, 1, &cloud_attempted)
         .await
         .map_err(|error| ApiError::upstream(error, cloud_attempted.load(Ordering::SeqCst)))?;
 
@@ -80,15 +128,31 @@ async fn ocr_image(
 }
 
 async fn ocr_pdf(
+    route: MatchedPath,
     State(state): State<AppState>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<Json<OcrResponse>, ApiError> {
     let started = Instant::now();
+    let mut log = RequestLog::default();
+    let result = pdf_response(&state, multipart, &mut log).await;
+    log_request(&route, started, &log, &result);
+    result
+}
+
+async fn pdf_response(
+    state: &AppState,
+    multipart: Result<Multipart, MultipartRejection>,
+    log: &mut RequestLog,
+) -> Result<Json<OcrResponse>, ApiError> {
+    let started = Instant::now();
     let upload = parse_upload(multipart.map_err(ApiError::rejection)?, true).await?;
+    log.requested_engine = Some(upload.engine);
+    log.upload_bytes = Some(upload.file.len());
     let rendered = PdfPages::render(&upload.file, upload.page_range, state.config.pdf_dpi)
         .await
         .map_err(ApiError::bad_request)?;
     let page_count = rendered.pages.len();
+    log.pages = Some(page_count);
     let concurrency = state.config.max_concurrent_pages;
     let requested_engine = upload.engine;
     let cloud_attempted = Arc::new(AtomicBool::new(false));
@@ -106,7 +170,12 @@ async fn ocr_pdf(
                 .await
                 .with_context(|| format!("failed to read rendered page {page_number}"))?;
             let output = ocr
-                .ocr_image_traced(&image, requested_engine, &cloud_attempted)
+                .ocr_image_traced(
+                    &image,
+                    requested_engine,
+                    page_number as usize,
+                    &cloud_attempted,
+                )
                 .await?;
             anyhow::Ok((page_number, output.markdown, output.engine))
         }

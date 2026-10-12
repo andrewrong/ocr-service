@@ -92,6 +92,35 @@ For a PDF, `engine` is `mixed` when different pages complete with different fall
 Invalid input returns HTTP 400, oversized requests return 413, and OCR/model failures return 502.
 Clients should allow up to 15 minutes for large PDFs.
 
+## Request logs
+
+Every OCR request and every engine attempt writes one `info` line with structured fields. No
+line holds document text, a file name, a request header or a credential. `GET /ocr/health` is
+not logged. Failures still write their `warn` lines as before.
+
+`OCR attempt`, when an attempt ends:
+
+| Field | Meaning |
+|---|---|
+| `engine` | engine tried (`paddle`, `glm`, `qwen`, `jina`) |
+| `page` | page number; 1 for an image |
+| `image_bytes` | size of the page image in bytes |
+| `duration_ms` | milliseconds the attempt took, without the wait for a model slot |
+| `outcome` | `ok`, `timeout` or `error` |
+| `chars` | characters of the text; only when `outcome` is `ok` |
+
+`OCR request`, when the response is ready (`/ocr/image`, `/ocr/pdf` and their `/v1` routes):
+
+| Field | Meaning |
+|---|---|
+| `route` | matched route, for example `/v1/ocr/image` |
+| `requested_engine` | engine the caller asked for; absent when the upload was rejected before it was read |
+| `upload_bytes` | size of the uploaded file in bytes; absent when the upload was rejected |
+| `pages` | number of pages; absent when a PDF could not be rendered |
+| `engine` | engine named in the response; absent on failure |
+| `status` | HTTP status |
+| `duration_ms` | total milliseconds |
+
 ## Local output limit
 
 `OCR_LOCAL_MAX_OUTPUT_TOKENS` (integer, default `4096`, at least 1) is sent as `max_tokens` with
