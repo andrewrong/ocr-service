@@ -197,7 +197,11 @@ impl Config {
             "OCR_MAX_CONCURRENT_MODEL_REQUESTS must be greater than zero"
         );
         anyhow::ensure!(
-            !config.jina_fallback_on_local_failure || config.jina_api_key.is_some(),
+            !config.jina_fallback_on_local_failure
+                || config
+                    .jina_api_key
+                    .as_ref()
+                    .is_some_and(|key| !key.trim().is_empty()),
             "OCR_JINA_FALLBACK_ON_LOCAL_FAILURE requires OCR_JINA_API_KEY"
         );
         anyhow::ensure!(
