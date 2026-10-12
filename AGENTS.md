@@ -1,58 +1,63 @@
-# Instructions for agents working on this repository
+# OCR Service
 
-`CLAUDE.md` describes the service: its architecture, the models, the API and how it runs.
-This file says what a change has to do. Where the two disagree on a project fact, fix the one
-that is wrong in the same pull request.
+## Scope
 
-## Build and test
+A Rust HTTP service that turns PDFs and images into Markdown. It calls local vision models
+(PaddleOCR-VL, GLM-OCR, Qwen3-VL) through one OpenAI-compatible adapter that talks to Ollama,
+LM Studio or llama.cpp, and optionally the hosted Jina OCR API. It normally runs under Docker
+Compose and reaches the inference runtime on the host.
 
-Before you push, all three pass from the repository root:
+Read [README.md](README.md) and [docs/integration.md](docs/integration.md) before a change
+that affects the HTTP contract, configuration, deployment or the cloud engine.
+[openapi.yaml](openapi.yaml) is the contract; [CLAUDE.md](CLAUDE.md) is the short overview.
 
-```bash
+## Project map
+
+- `src/main.rs` parses the command line and starts the server; `src/lib.rs` exposes the modules.
+- `src/config.rs` reads every setting from the environment and validates it.
+- `src/models.rs` holds the public request and response types, including `Engine`.
+- `src/http/routes.rs` owns the routes, multipart parsing and the mapping of errors to statuses.
+- `src/ocr/engine.rs` owns engine selection, the fallback order, timeouts and the health snapshot.
+- `src/ocr/backend.rs` is the OpenAI-compatible client for the local runtimes.
+- `src/ocr/jina.rs` is the hosted Jina client.
+- `src/ocr/pdf.rs` splits a PDF into pages with `pdftoppm`; `src/ocr/merger.rs` joins page results.
+- `tests/` holds integration tests that run against servers they start themselves.
+- `sdk/python` and `sdk/go` are the client SDKs; `.agents/skills/ocr-local-service` is the agent
+  skill, a `curl` and `jq` client.
+- `Dockerfile` and `compose.yaml` build and run the service; `.env.example` lists the settings.
+
+## Rules
+
+- **The contract moves as one.** A change to a request, a response or a setting changes, in the
+  same pull request, `openapi.yaml`, both SDKs, the skill, `.env.example`, `compose.yaml` and the
+  documents that describe it.
+- **Local stays local.** A request that does not name a cloud engine sends no page to a hosted
+  API unless the operator has turned that on with a setting that is off by default. A change to
+  when a page may leave the machine says so in the description of its pull request.
+- **Credentials.** A key is read from the environment only. It is never logged, never returned
+  in a response and never written to a file of the repository. A change to how a credential is
+  read, stored, logged or sent says so in the description of its pull request.
+- **Tests are closed.** A test or a fixture talks only to servers it starts itself on
+  `127.0.0.1`, on a port the system picks. None sends a request to a hosted OCR API or to a
+  model runtime, downloads a model, or needs Docker.
+- **The installed service is not part of the work.** Nothing starts, stops, rebuilds or sends a
+  request to a running instance of the service, binds its port, or reads or writes its directory
+  or any `.env` file. Deployment is done by the owner.
+- **Defaults are stable.** The default engine, the fallback order of the local engines and the
+  per-engine timeouts change only when the issue asks for it.
+
+## Code
+
+- Errors are `anyhow::Result`; logs go through `tracing`; the async runtime is `tokio`.
+- Match the code around a change: its naming, its comment density and its idiom.
+- A change of behaviour comes with a test that fails without it.
+
+## Checks
+
+All three pass before a pull request is opened:
+
+```
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --all-targets --locked
 ```
-
-The tests need `pdftoppm` (poppler), `curl` and `jq` on `PATH`.
-
-A change under `sdk/go` also passes `go vet ./... && go test ./...` there, and a change under
-`sdk/python` passes `uv run --locked --extra test pytest` there. The workflow in
-`.github/workflows/ci.yml` runs the same commands on every pull request.
-
-## Tests
-
-- A test talks only to servers it starts itself on `127.0.0.1` (see `tests/jina.rs`). No test
-  calls a hosted OCR API, a model runtime or a running instance of this service.
-- The live test of the Go SDK runs only when `OCR_LIVE_TEST_URL` is set. Do not set it.
-- Every behaviour change comes with a test.
-
-## What a change does not touch
-
-- `.env` files: never read, print or commit one. `.env.example` holds names and placeholder
-  values only.
-- An installed instance of the service (by default on `127.0.0.1:18100`): do not start it,
-  stop it or send it a request, and do not bind that port.
-- The deployment files (`compose.yaml`, `Dockerfile`, `.env.example`, `scripts/`) and the skill
-  that callers install (`.agents/`) change only when the issue asks for it.
-- Cloud use is opt-in: a request that does not name the `jina` engine never uploads a page.
-  Do not change that, or how a key is read, stored or logged, unless the issue asks for it.
-
-## The contract
-
-`openapi.yaml` is the public contract, and the service serves it. A change to a route, or to a
-field of a request or a response, changes `openapi.yaml`, `docs/integration.md` and the SDKs
-under `sdk/` that expose it, in the same pull request.
-
-## Conventions
-
-- English for code, comments, commit messages and pull request text. Commit subjects follow the
-  history: `feat: ...`, `fix: ...`, `chore: ...`.
-- Errors are `anyhow::Result`, logs go through `tracing`, the async runtime is `tokio`.
-- Do not add a dependency the issue does not mention.
-- The default branch is `master`. Never push to it; work reaches it through a pull request.
-
-## The repository is public
-
-No secret, token, personal data, path of a private machine or real document in code, fixtures,
-commit messages, issues or pull request text.
