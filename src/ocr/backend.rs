@@ -13,6 +13,15 @@ pub(super) struct OpenAiCompatibleBackend {
     max_tokens: u32,
 }
 
+/// While streaming, the text is checked for a loop after this many new characters.
+const CHECK_EVERY_CHARS: usize = 500;
+/// A loop found during the stream is a unit written at least this many times in a row.
+const MIN_LOOP_COPIES: usize = 3;
+/// A loop found during the stream repeats at least this many characters in all.
+const MIN_LOOP_CHARS: usize = 200;
+/// The longest unit of a loop found during the stream, in characters.
+const MAX_LOOP_UNIT: usize = 500;
+
 /// A local model's text, and how many characters a cut repetition removed from it.
 pub(super) struct Transcription {
     pub(super) markdown: String,
@@ -53,12 +62,12 @@ impl OpenAiCompatibleBackend {
                     },
                 ],
             }],
-            stream: false,
+            stream: true,
             temperature: 0,
             max_tokens: self.max_tokens,
         };
 
-        let response = self
+        let mut response = self
             .with_auth(
                 self.client
                     .post(format!("{}/v1/chat/completions", self.base_url)),
@@ -74,29 +83,70 @@ impl OpenAiCompatibleBackend {
             anyhow::bail!("{} returned {status} for model {model}: {body}", self.label);
         }
 
-        let response: ChatCompletionResponse = response
-            .json()
-            .await
-            .with_context(|| format!("{} returned an invalid chat response", self.label))?;
-        let choice = response.choices.into_iter().next();
-        let truncated = choice
-            .as_ref()
-            .is_some_and(|choice| choice.finish_reason.as_deref() == Some("length"));
-        let mut markdown = choice
-            .map(|choice| choice.message.content.trim().to_owned())
-            .unwrap_or_default();
-        let mut repetition_removed = None;
-        if truncated {
-            let (cut, removed) = cut_repetition(&markdown)
-                .with_context(|| format!("{} returned a truncated transcription", self.label))?;
-            markdown = cut;
-            repetition_removed = Some(removed);
+        let is_json = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("application/json"));
+        let mut reader = StreamReader::default();
+        if is_json {
+            // A server that ignores `stream` answers with one JSON document.
+            let body: ChatCompletionResponse = response
+                .json()
+                .await
+                .with_context(|| format!("{} returned an invalid chat response", self.label))?;
+            if let Some(choice) = body.choices.into_iter().next() {
+                reader.text = choice.message.content;
+                reader.finish_reason = choice.finish_reason;
+            }
+        } else {
+            let mut checked = 0;
+            let mut pending = Vec::new();
+            'stream: while let Some(chunk) = response
+                .chunk()
+                .await
+                .with_context(|| format!("{} stream failed", self.label))?
+            {
+                pending.extend_from_slice(&chunk);
+                while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=end).collect();
+                    if reader.line(&line) {
+                        break 'stream;
+                    }
+                }
+                if reader.chars - checked >= CHECK_EVERY_CHARS {
+                    checked = reader.chars;
+                    if let Some(kept) = find_loop(&reader.text) {
+                        // Dropping `response` closes the connection to the model.
+                        return self.finish(&reader.text, Some(kept));
+                    }
+                }
+            }
+            reader.line(&pending);
         }
+
+        let truncated = reader.finish_reason.as_deref() == Some("length");
+        if truncated {
+            let text = reader.text.trim();
+            let kept = cut_repetition(text)
+                .map(|(cut, _)| cut.len())
+                .or_else(|| find_loop(text))
+                .with_context(|| format!("{} returned a truncated transcription", self.label))?;
+            return self.finish(text, Some(kept));
+        }
+        self.finish(&reader.text, None)
+    }
+
+    /// Builds the result from `text`, keeping only its first `kept` bytes when a repetition is cut.
+    fn finish(&self, text: &str, kept: Option<usize>) -> Result<Transcription> {
+        let markdown = kept.map_or(text, |kept| &text[..kept]).trim().to_owned();
+        let text = text.trim();
         anyhow::ensure!(
             !markdown.is_empty(),
             "{} returned an empty transcription",
             self.label
         );
+        let repetition_removed = kept.map(|_| text.chars().count() - markdown.chars().count());
         Ok(Transcription {
             markdown,
             repetition_removed,
@@ -161,6 +211,84 @@ fn cut_repetition(text: &str) -> Option<(String, usize)> {
     let cut = lines[..keep].join("\n");
     let removed = text.chars().count() - cut.chars().count();
     Some((cut, removed))
+}
+
+/// The text and the finish reason read so far from a server-sent event stream.
+#[derive(Default)]
+struct StreamReader {
+    text: String,
+    chars: usize,
+    finish_reason: Option<String>,
+}
+
+impl StreamReader {
+    /// Reads one line of the stream; returns true at `data: [DONE]`.
+    fn line(&mut self, line: &[u8]) -> bool {
+        let line = String::from_utf8_lossy(line);
+        let Some(data) = line.trim().strip_prefix("data:") else {
+            return false;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
+            return true;
+        }
+        if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data)
+            && let Some(choice) = chunk.choices.into_iter().next()
+        {
+            if let Some(content) = choice.delta.content {
+                self.chars += content.chars().count();
+                self.text.push_str(&content);
+            }
+            if choice.finish_reason.is_some() {
+                self.finish_reason = choice.finish_reason;
+            }
+        }
+        false
+    }
+}
+
+/// Finds a loop at the end of `text`: a unit of up to `MAX_LOOP_UNIT` characters (lines or not)
+/// written at least `MIN_LOOP_COPIES` times in a row, `MIN_LOOP_CHARS` characters in all, the
+/// last copy possibly incomplete. Returns the byte length of the text up to the first copy.
+fn find_loop(text: &str) -> Option<usize> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let n = chars.len();
+    let mut best: Option<usize> = None; // chars kept
+    for unit in 1..=MAX_LOOP_UNIT.min(n / MIN_LOOP_COPIES) {
+        let mut start = n - unit;
+        while start > 0 && chars[start - 1].1 == chars[start - 1 + unit].1 {
+            start -= 1;
+        }
+        let repeated = n - start;
+        if repeated >= MIN_LOOP_COPIES * unit
+            && repeated >= MIN_LOOP_CHARS
+            && best.is_none_or(|kept| start + unit < kept)
+        {
+            best = Some(start + unit);
+        }
+    }
+    let kept = best?;
+    Some(chars.get(kept).map_or(text.len(), |(offset, _)| *offset))
+}
+
+#[derive(Deserialize)]
+struct StreamChunk {
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+}
+
+#[derive(Deserialize)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: StreamDelta,
+    #[serde(default)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(Serialize)]
