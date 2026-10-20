@@ -33,11 +33,18 @@ A change under `sdk/go` also passes `go vet ./... && go test ./...` there, and a
   values only.
 - An installed instance of the service (by default on `127.0.0.1:18100`): do not start it,
   stop it or send it a request, and do not bind that port.
-- The deployment files (`compose.yaml`, `Dockerfile`, `.env.example`, `scripts/`) and the skill
+- The deployment files (`compose.yaml`, `Dockerfile`, `.env.example`) and the skill
   that callers install (`.agents/`) change only when the issue asks for it.
 - Cloud use is opt-in: a request that does not name the `jina` engine never uploads a page,
   except a local strategy after every local engine failed, when the operator set
   `OCR_JINA_FALLBACK_ON_LOCAL_FAILURE=true` (default `false`). Do not change that, or how a key is read, stored or logged, unless the issue asks for it.
+
+## Deploy
+
+crew deploys this service (docker way). `compose.yaml` takes `CREW_SERVICE_DIR`, `CREW_SECRETS`
+and `CREW_IMAGE` from crew; the settings are in `ocr-service.env` in the `CREW_SECRETS`
+directory, whose keys `.env.example` lists. `OCR_INFERENCE_URL` must point at the host from
+inside the container (`http://host.docker.internal:11434`). This repository has no deploy script.
 
 ## The contract
 

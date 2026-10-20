@@ -30,7 +30,7 @@ For LM Studio, start its server on a container-accessible address:
 lms server start --port 1234 --bind 0.0.0.0
 ```
 
-Then configure `.env`:
+Then set these in `ocr-service.env` (see below):
 
 ```bash
 OCR_INFERENCE_BACKEND=lmstudio
@@ -45,61 +45,32 @@ Use `curl http://127.0.0.1:1234/v1/models | jq -r '.data[].id'` to obtain exact 
 LM Studio can require an API token; set it in `OCR_INFERENCE_API_TOKEN`. Binding any runtime to all
 interfaces can expose it to the local network, so use authentication and firewall restrictions.
 
-Start and verify the service:
+### Deployment by crew
+
+crew deploys this service (docker way): after a merge it builds the commit with
+`docker compose -p ocr-service --project-directory <checkout> build`, starts it with `up -d` and
+rolls back to the image of the commit before when the deploy fails. `compose.yaml` takes exactly
+three variables from crew: `CREW_SERVICE_DIR`, `CREW_SECRETS` (the directory that holds
+`ocr-service.env`) and `CREW_IMAGE` (`ocr-service:<7-hex commit>`). All are required; there is no
+fallback.
+
+The settings are the keys of `ocr-service.env`, which `.env.example` lists with their defaults. Copy
+it to `ocr-service.env` in the `CREW_SECRETS` directory and set the private values there (the
+file is read by compose as an `env_file`, so it overrides nothing and is never committed).
+`OCR_INFERENCE_URL` must point at the host from inside the container, for example
+`http://host.docker.internal:11434`; the code default `http://127.0.0.1:11434` is the container
+itself. The API port is fixed to `127.0.0.1:18100`.
+
+Without crew, set the three variables yourself and run compose from the repository root:
 
 ```bash
-cp .env.example .env
-docker compose up -d --build
+CREW_SERVICE_DIR=$PWD CREW_SECRETS=<dir-with-ocr-service.env> CREW_IMAGE=ocr-service:local \
+  docker compose up -d --build
 docker compose ps
 curl -fsS http://127.0.0.1:18100/ocr/health | jq
 ```
 
-Stop it with `docker compose down`. The API port binds to `127.0.0.1` by default.
-
-### Deploy a commit and roll back
-
-`scripts/deploy.sh` deploys a commit of this repository, or rolls back to the one before, and
-appends one line per attempt to a record:
-
-```bash
-OCR_DEPLOY_SERVICE_DIR=<dir> OCR_DEPLOY_RECORD=<file> scripts/deploy.sh [<commit>]
-OCR_DEPLOY_SERVICE_DIR=<dir> OCR_DEPLOY_RECORD=<file> scripts/deploy.sh --rollback
-```
-
-- `OCR_DEPLOY_SERVICE_DIR` (required): the directory that holds the Compose file the service runs from.
-- `OCR_DEPLOY_RECORD` (required): the file the record lines are appended to; created when missing.
-- `OCR_DEPLOY_HEALTH_TIMEOUT` (optional, default `180`): seconds to wait for the health check.
-
-A missing variable or wrong arguments print the usage, write no line and exit with 2.
-
-A deploy fetches `origin`, resolves `<commit>` (default `origin/master`) to 40 characters, tags the
-image running now as `ocr-service:<its commit>`, builds the commit as `git archive` gives it (not
-the working tree) with the label `org.opencontainers.image.revision` and the tag
-`ocr-service:<commit>`, points `ocr-service:local` at it, runs `docker compose up -d --no-build`
-in the service directory and waits for the container to be `healthy`. A rollback points
-`ocr-service:local` at the image of the `from` commit of the last `deploy` line with result `ok`,
-then starts and waits the same way; nothing is built. The script never rolls back by itself and
-removes no image.
-
-The script also keeps the `compose.yaml` of the service directory at the one of the deployed
-commit. After the build succeeded, when the two differ or there is none, the file there is saved
-beside it as `compose.yaml.<commit running before>` (replacing an older copy of that name) and the
-`compose.yaml` of the commit is written in its place; when they are equal nothing is written. A
-rollback copies `compose.yaml.<target>` over `compose.yaml` when that file exists, after saving the
-current one as `compose.yaml.<commit running before>`. In the service directory the script writes
-only `compose.yaml` and these copies; it never reads, writes, moves or removes a `.env` file.
-
-Each attempt past the usage check appends one line of five fields separated by a space:
-
-```
-<time> <deploy|rollback> <from> <to> <result>
-```
-
-`<time>` is RFC 3339 with an offset (`2026-10-12T18:30:00+08:00`); `<from>` is the commit running
-before and `<to>` the commit asked for, 7 to 40 lowercase hexadecimal characters, `0000000` when
-not known. `<result>` is one of `ok`, `fetch-failed`, `unknown-commit`, `build-failed`,
-`up-failed`, `unhealthy`, `no-rollback-target`, `image-missing`. The exit code is 0 only for `ok`,
-otherwise 1.
+Stop it with `docker compose down` (with the same variables set).
 
 ## Integrate another service
 
