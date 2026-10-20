@@ -143,7 +143,7 @@ and `max_completion_tokens=8192` ([model card](https://huggingface.co/jinaai/jin
 [official contract](https://api.jina.ai/openapi.json)). Structured Markdown can contain HTML tables
 and LaTeX; the service does not rewrite or summarize recognized content.
 
-Configure `OCR_JINA_API_KEY` only on the OCR container in an ignored private `.env`.
+Configure `OCR_JINA_API_KEY` only on the OCR container in the private `ocr-service.env`.
 The base URL defaults to `https://api.jina.ai`; `OCR_JINA_TIMEOUT_SECS=120` covers the entire
 single-page cloud attempt including its one possible retry. The overall upstream HTTP timeout
 must remain greater than every model timeout. Cloud 429/500/502/503/504 are retried once;
