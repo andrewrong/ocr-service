@@ -151,9 +151,9 @@ async fn closed(seen: &Seen) -> bool {
 }
 
 const LINES: [&str; 3] = [
-    "First line of a document with some words in it.\n",
-    "Second line, which differs from the first one a lot.\n",
-    "Third and last line of the repeated block, long enough.\n",
+    "First line of a document with some words in it, and more words.\n",
+    "Second line, which differs from the first one a lot, and goes on.\n",
+    "Third and last line of the repeated block, long enough to count for sure.\n",
 ];
 
 #[tokio::test]
@@ -173,7 +173,7 @@ async fn every_local_request_streams_and_carries_the_configured_cap() {
 #[tokio::test]
 async fn a_loop_of_lines_is_cut_and_the_stream_closed_early() {
     let block: usize = LINES.iter().map(|line| line.len()).sum();
-    assert!(block >= 150);
+    assert!(block >= 200);
     let head: Vec<String> = LINES.iter().map(|line| line.to_string()).collect();
     let tail = head.clone();
     let (url, seen) = runtime(move |seen, _| endless(seen, head.clone(), tail.clone())).await;
@@ -202,8 +202,7 @@ async fn a_loop_inside_one_line_is_cut_and_the_stream_closed_early() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["engine"], "glm");
     let text = body["markdown"].as_str().unwrap();
-    assert!(text.starts_with(intro.trim_end()), "{text}");
-    assert!(text.len() <= intro.len() + 2 * phrase.len(), "{text}");
+    assert_eq!(text, intro.trim());
     assert_eq!(seen.calls.load(Ordering::SeqCst), 1);
     assert!(closed(&seen).await, "the stream was not closed");
     assert!(seen.sent_chars.load(Ordering::SeqCst) < intro.len() + 3000);
@@ -252,5 +251,17 @@ async fn a_truncated_tail_with_an_incomplete_last_copy_is_cut_without_fallback()
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["engine"], "glm");
     assert_eq!(body["markdown"], format!("{intro}{block}").trim());
+    assert_eq!(seen.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn truncated_crlf_unicode_repetition_is_cut_without_panicking() {
+    let (url, seen) = runtime(|_, _| finished(&["Intro\r\n界\r\n界\r\n界"], "length")).await;
+
+    let (status, body) = post_image(config(url), "glm").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["engine"], "glm");
+    assert_eq!(body["markdown"], "Intro\n界");
     assert_eq!(seen.calls.load(Ordering::SeqCst), 1);
 }

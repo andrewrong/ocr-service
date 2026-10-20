@@ -118,7 +118,7 @@ impl OpenAiCompatibleBackend {
                     checked = reader.chars;
                     if let Some(kept) = find_loop(&reader.text) {
                         // Dropping `response` closes the connection to the model.
-                        return self.finish(&reader.text, Some(kept));
+                        return self.finish(&reader.text, Some(reader.text[..kept].to_owned()));
                     }
                 }
             }
@@ -128,25 +128,26 @@ impl OpenAiCompatibleBackend {
         let truncated = reader.finish_reason.as_deref() == Some("length");
         if truncated {
             let text = reader.text.trim();
-            let kept = cut_repetition(text)
-                .map(|(cut, _)| cut.len())
-                .or_else(|| find_loop(text))
+            let cut = cut_repetition(text)
+                .map(|(cut, _)| cut)
+                .or_else(|| find_loop(text).map(|kept| text[..kept].to_owned()))
                 .with_context(|| format!("{} returned a truncated transcription", self.label))?;
-            return self.finish(text, Some(kept));
+            return self.finish(text, Some(cut));
         }
         self.finish(&reader.text, None)
     }
 
-    /// Builds the result from `text`, keeping only its first `kept` bytes when a repetition is cut.
-    fn finish(&self, text: &str, kept: Option<usize>) -> Result<Transcription> {
-        let markdown = kept.map_or(text, |kept| &text[..kept]).trim().to_owned();
+    /// Builds the result from `text`, or from `cut`, the text without its looping tail.
+    fn finish(&self, text: &str, cut: Option<String>) -> Result<Transcription> {
+        let removed = cut.is_some();
+        let markdown = cut.as_deref().unwrap_or(text).trim().to_owned();
         let text = text.trim();
         anyhow::ensure!(
             !markdown.is_empty(),
             "{} returned an empty transcription",
             self.label
         );
-        let repetition_removed = kept.map(|_| text.chars().count() - markdown.chars().count());
+        let repetition_removed = removed.then(|| text.chars().count() - markdown.chars().count());
         Ok(Transcription {
             markdown,
             repetition_removed,
@@ -249,7 +250,8 @@ impl StreamReader {
 
 /// Finds a loop at the end of `text`: a unit of up to `MAX_LOOP_UNIT` characters (lines or not)
 /// written at least `MIN_LOOP_COPIES` times in a row, `MIN_LOOP_CHARS` characters in all, the
-/// last copy possibly incomplete. Returns the byte length of the text up to the first copy.
+/// last copy possibly incomplete. Returns the byte length of the text to keep: up to the first copy
+/// of a block of lines, or up to the start of a run inside one line.
 fn find_loop(text: &str) -> Option<usize> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let n = chars.len();
@@ -260,11 +262,14 @@ fn find_loop(text: &str) -> Option<usize> {
             start -= 1;
         }
         let repeated = n - start;
+        // A block of lines keeps its first copy; a run inside a line is all loop.
+        let whole_lines = chars[start..start + unit].iter().any(|(_, c)| *c == '\n');
+        let keep = if whole_lines { start + unit } else { start };
         if repeated >= MIN_LOOP_COPIES * unit
             && repeated >= MIN_LOOP_CHARS
-            && best.is_none_or(|kept| start + unit < kept)
+            && best.is_none_or(|kept| keep < kept)
         {
-            best = Some(start + unit);
+            best = Some(keep);
         }
     }
     let kept = best?;
