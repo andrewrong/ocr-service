@@ -1,0 +1,8 @@
+# Allow list of TestNoPrivateDataInTrackedFiles. This file is public: it holds only
+# non-personal path segments (such as: me u x test zh en private runner work) and
+# "<file>:<kind>" entries (kind is path, email or tailnet), never the name of a
+# person, a machine or a volume.
+#
+# An entry is a bare segment allowed after a local-path prefix, or one kind in one
+# file. Every entry needs a comment on the line above it saying why it is not
+# private data. The current tree needs no entry.
